@@ -7,8 +7,18 @@ import android.view.inputmethod.InputConnection
 import java.util.Locale
 
 /** Does not retain editor contents; always resolves the focused connection. */
-class InputConnectionController(private val connection: () -> InputConnection?) {
-    fun commit(text: String) { connection()?.commitText(text, 1) }
+class InputConnectionController(private val connection: () -> InputConnection?) : TextEditor {
+    override fun commit(text: String) { connection()?.commitText(text, 1) }
+    override fun compose(text: String) { connection()?.setComposingText(text, 1) }
+    override fun finish() { connection()?.finishComposingText() }
+    override fun before(length: Int): String = connection()?.getTextBeforeCursor(length, 0)?.toString().orEmpty()
+    override fun replaceBefore(length: Int, text: String) {
+        connection()?.let { ic ->
+            ic.beginBatchEdit()
+            try { ic.deleteSurroundingText(length, 0); if (text.isNotEmpty()) ic.commitText(text, 1) }
+            finally { ic.endBatchEdit() }
+        }
+    }
     fun delete(sensitive: Boolean) {
         val ic = connection() ?: return
         // Never ask the editor for password contents, even transiently.

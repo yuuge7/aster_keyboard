@@ -12,8 +12,10 @@ data class EditorProfile(
     val action: Int = EditorInfo.IME_ACTION_UNSPECIFIED,
     val caps: Int = 0,
     val signed: Boolean = false,
-    val decimal: Boolean = false
+    val decimal: Boolean = false,
+    val noSuggestions: Boolean = false
 ) {
+    val assistedTyping get() = kind == EditorKind.TEXT && !sensitive && !noSuggestions
     val actionLabel: String get() = when (action) {
         EditorInfo.IME_ACTION_GO -> "Go"
         EditorInfo.IME_ACTION_SEARCH -> "Search"
@@ -45,7 +47,8 @@ data class EditorProfile(
                 else info.imeOptions and EditorInfo.IME_MASK_ACTION,
                 if (privateField || cls != InputType.TYPE_CLASS_TEXT) 0 else type and (InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or InputType.TYPE_TEXT_FLAG_CAP_WORDS or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES),
                 type and InputType.TYPE_NUMBER_FLAG_SIGNED != 0,
-                type and InputType.TYPE_NUMBER_FLAG_DECIMAL != 0)
+                type and InputType.TYPE_NUMBER_FLAG_DECIMAL != 0,
+                cls == InputType.TYPE_CLASS_TEXT && type and InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS != 0)
         }
     }
 }

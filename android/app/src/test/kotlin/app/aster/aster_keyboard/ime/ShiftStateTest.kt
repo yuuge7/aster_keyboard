@@ -33,4 +33,17 @@ class ShiftStateTest {
         state.lock(); state.autoCap(false)
         assertEquals(ShiftMode.LOCKED, state.mode)
     }
+    @Test fun manualLowercaseOverridesAutomaticCapitalizationForOneCharacter() {
+        val state = ShiftState()
+        state.autoCap(true); state.tap(1000); state.autoCap(true)
+        assertEquals(ShiftMode.OFF, state.mode)
+        state.consume(); state.autoCap(true)
+        assertEquals(ShiftMode.ONCE, state.mode)
+    }
+    @Test fun manualShiftStillWorksWithAutomaticCapitalizationDisabled() {
+        val state = ShiftState()
+        state.tap(1000); state.autoCap(false)
+        assertEquals(ShiftMode.ONCE, state.mode)
+        state.consume(); assertEquals(ShiftMode.OFF, state.mode)
+    }
 }

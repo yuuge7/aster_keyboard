@@ -2,18 +2,35 @@ package app.aster.aster_keyboard.diagnostics
 
 import android.app.Activity
 import android.os.Bundle
+import android.os.Build
+import android.content.res.Configuration
+import android.view.WindowInsets
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import app.aster.aster_keyboard.settings.SettingsStore
 
 /** Real Android editors for verifying InputConnection behavior independently of Flutter. */
 class EditorTestActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        val theme = SettingsStore(this).read().theme
+        val dark = theme == "dark" || theme == "system" && resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        setTheme(if (dark) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         super.onCreate(savedInstanceState)
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 32, 24, 32) }
+        column.setOnApplyWindowInsetsListener { _, insets ->
+            if (Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                column.setPadding(24 + bars.left, 32 + bars.top, 24 + bars.right, 32 + bars.bottom)
+            } else {
+                @Suppress("DEPRECATION")
+                column.setPadding(24 + insets.systemWindowInsetLeft, 32 + insets.systemWindowInsetTop, 24 + insets.systemWindowInsetRight, 32 + insets.systemWindowInsetBottom)
+            }
+            insets
+        }
         column.addView(TextView(this).apply { text = "Aster · Native editor tests"; textSize = 24f })
         column.addView(TextView(this).apply { text = "Test content is temporary. Use Android Back to return." })
         val fields = listOf(

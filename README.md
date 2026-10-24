@@ -7,19 +7,24 @@ A private, offline Android keyboard with a Flutter companion app. The keyboard r
 
 ## Features
 
-- English QWERTY with one-shot Shift, caps lock, and editor-requested capitalization.
+- English and Romanian QWERTY, with dedicated `ă â î ș ț` keys, accented-letter popups, and quick language switching.
+- Offline suggestions and autocorrect using bundled 50,000-entry frequency lists for each language, with immediate Backspace undo and an explicit personal dictionary.
+- System, light, and dark appearance in both the keyboard and companion, plus your own photo wallpaper with adjustable dimming.
+- An emoji panel with categories, recent emoji, flags, and skin-tone variants for supported gestures.
+- One-shot Shift, caps lock, and configurable automatic sentence capitalization.
 - Two number/symbol pages, long-press number shortcuts, and repeating deletion.
 - Numeric and phone layouts, plus email and URL shortcuts.
 - Editor-specific actions such as Search, Send, Next, and Done.
 - Cursor movement, hold-to-select, select all, keyboard switching, and dismissal.
 - Sensitive-field handling and a compact landscape layout.
 - Guided activation, live keyboard status, a typing playground, native Android test fields, and privacy/license information.
+- Controls for punctuation spacing, double-space periods, a number row, key height, sound, and vibration.
 
-The current app does not include suggestions, autocorrect, custom themes, additional languages, an emoji browser, or clipboard history. Real-device compatibility and accessibility testing remain ongoing work.
+Autocorrect is a conservative, local dictionary system for spelling mistakes and common forms, rather than grammar or sentence rewriting. Device/OEM compatibility and accessibility testing remain ongoing work.
 
 ## Privacy
 
-Aster does not persist typed text, access the clipboard, include analytics or advertising, or request Internet access in release builds. Debug/profile builds use Flutter's development networking. The native service reads text before the cursor transiently for Unicode-aware deletion in ordinary fields; sensitive fields use delete key events without reading their contents. Sensitive-field detection relies on the receiving app's editor metadata.
+Aster does not persist conversations, access the clipboard, include analytics or advertising, or request Internet access in release builds. Settings, a selected wallpaper, explicitly added personal words, and recent emoji stay in private app storage. There is no automatic learning from your typing. Debug/profile builds use Flutter's development networking. The native service holds the current composing word transiently and reads limited context for Unicode deletion, correction undo, and punctuation in ordinary fields; sensitive fields use delete key events without reading their contents. Sensitive-field detection relies on the receiving app's editor metadata.
 
 Android displays its standard warning when you enable any third-party keyboard. Other apps can handle the text you enter according to their own policies.
 
@@ -33,6 +38,19 @@ Android displays its standard warning when you enable any third-party keyboard. 
 With Android platform-tools installed, you can instead run `adb install -r path/to/Aster-Keyboard-v1.2.apk`.
 
 Updates must be signed with the same key as the installed app. An older debug-signed build must be uninstalled before installing the first release signed with the new key. To switch keyboards later, use Aster's keyboard-picker key or Android's system keyboard selector.
+
+## Make Aster your own
+
+Open **Settings** in the companion, or tap the keyboard's gear button. Preferences are saved on the device and applied to the native keyboard immediately.
+
+- **Appearance:** choose System, Light, or Dark. Choose a wallpaper with Android's image picker, adjust its dimming, or remove it. A resized, metadata-free private copy is saved; broad photo/storage access is not requested.
+- **Languages:** enable English and/or Romanian, keeping at least one enabled. Tap the language name on the keyboard, or hold Space, to cycle enabled languages. Hold the language name to open Android's keyboard picker. Romanian uses comma-below `ș` and `ț`; legacy cedilla forms are normalized in dictionary lookups.
+- **Autocorrect:** type a space or punctuation to accept a likely correction; press Backspace immediately to restore your original spelling. Tap a suggestion to insert it explicitly. Romanian diacritic restoration can be disabled separately. Unknown names can be added manually to the personal dictionary, with one word per line, up to 500 per language.
+- **Typing:** independently control suggestions, autocorrect, automatic capitals, spaces after `, ; : ! ?`, and double-space periods. Numeric separators such as `1,5` and `12:30` stay intact. Hold quote or dash keys on the symbols page for typographic forms, including Romanian `„…”` quotes. Automatic assistance is disabled in password/private fields, email addresses, URLs, numeric editors, and editors requesting no suggestions.
+- **Layout:** enable the number row, adjust key height, and choose sound/vibration feedback. Hold letters for accented characters or top-row numbers. Hold Delete to repeat deletion; use cursor arrows and hold them to select.
+- **Emoji:** tap **☺**, choose a category, and scroll the grid. Supported hand gestures offer skin tones on long press. **ABC** returns to letters. Recent emoji are saved only when selected in ordinary text fields.
+
+The **Try it** screen includes English/Romanian examples and native test fields. Wallpaper and settings survive app restarts; uninstalling clears this private data.
 
 ## Set up a development machine
 
@@ -83,13 +101,16 @@ android/
   app/src/main/kotlin/app/aster/aster_keyboard/
     MainActivity.kt             Flutter platform-channel endpoint
     ime/                        Keyboard, editor profiles, input dispatch
+    settings/                   Shared native preferences and private photo import
     diagnostics/                Native editor test activity
   app/src/test/                 Kotlin unit tests
   app/src/androidTest/          Instrumented Android editor tests
   gradle/wrapper/               Pinned Gradle distribution and wrapper JAR
+  app/src/main/assets/dictionaries/  Offline English/Romanian word frequencies
 lib/
   app/aster_app.dart             Companion screens and onboarding
   services/keyboard_bridge.dart Flutter-to-Android channel
+  services/keyboard_settings.dart Shared settings contract
 assets/fonts/                   Roboto fonts and license
 test/                           Flutter widget and golden tests
 scripts/signing.py              Private signing-file creation/restoration
@@ -97,7 +118,7 @@ pubspec.yaml                    Dependencies and release-version baseline
 pubspec.lock                    Locked Dart dependencies
 ```
 
-The platform channel is `app.aster/keyboard`; it carries activation status and navigation commands. Keyboard events are handled through Android's `InputMethodService` and `InputConnection`, independently of the Flutter companion.
+The platform channel is `app.aster/keyboard`; it carries activation status, preferences, wallpaper selection, and navigation. `SettingsStore` is the source of truth for Flutter and the IME. Keyboard events are handled through Android's `InputMethodService` and `InputConnection`, independently of the Flutter companion. Dictionary loading and suggestions run on a worker thread. `TypingSession` and `WordLexicon` isolate typing policies for JVM tests without a device.
 
 ## Contribute and validate changes
 
@@ -209,4 +230,6 @@ The ignore rules intentionally include `*.md` and `!README.md`. This keeps local
 
 ## Dependencies and third-party licenses
 
-Flutter is the only Dart runtime dependency. The app bundles Roboto and Material icons; Roboto's license is in `assets/fonts/roboto_license.txt`, and licenses are accessible in the app. `flutter_test`, `flutter_lints`, JUnit, and AndroidX Test support development and testing. No application source-code license has been selected; the repository owner should choose one before offering redistribution under specific terms.
+Flutter is the only Dart runtime dependency. The app bundles Roboto and Material icons; Roboto's license is in `assets/fonts/roboto_license.txt`. English/Romanian word frequencies come from [FrequencyWords by Hermit Dave](https://github.com/hermitdave/FrequencyWords), derived from OpenSubtitles 2018 and licensed **CC BY-SA 4.0**. Full attribution, source revision, and license text are in `assets/licenses/wordlists.txt` and alongside the native dictionaries. The lists are bundled with the app and never downloaded at runtime. Licenses are available in the companion's Privacy tab.
+
+`flutter_test`, `flutter_lints`, JUnit, and AndroidX Test support development and testing. No application source-code license has been selected; the repository owner should choose one before offering redistribution under specific terms.

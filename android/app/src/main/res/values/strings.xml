@@ -1,1 +1,4 @@
-<resources><string name="subtype_english">English (QWERTY)</string></resources>
+<resources>
+    <string name="subtype_english">English (QWERTY)</string>
+    <string name="subtype_romanian">Română (QWERTY)</string>
+</resources>

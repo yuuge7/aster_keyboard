@@ -71,4 +71,16 @@ class EditorIntegrationTest {
         }
         assertEquals(EditorInfo.IME_ACTION_NONE, EditorProfile.from(info).action)
     }
+    @Test fun assistedTypingIsDisabledForPrivateAndSpecializedEditors() {
+        listOf(
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+            InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS,
+            InputType.TYPE_CLASS_NUMBER,
+            InputType.TYPE_CLASS_PHONE,
+        ).forEach { type ->
+            assertFalse(EditorProfile.from(EditorInfo().apply { inputType = type }).assistedTyping)
+        }
+    }
 }
