@@ -1,0 +1,66 @@
+# Local Markdown and agent instructions; publish README.md.
+*.md
+!README.md
+
+# Signing identities, passwords, and exported secrets.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.b64
+key.properties
+.env
+.env.*
+!.env.example
+
+# Flutter/Dart generated files. Keep pubspec.lock.
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+.widget_preview/
+**/doc/api/
+app.*.symbols
+app.*.map.json
+
+# Android local files and build outputs. Keep the complete Gradle wrapper.
+**/local.properties
+**/.gradle/
+**/.kotlin/
+**/.cxx/
+**/captures/
+/android/.local/
+/android/app/debug/
+/android/app/profile/
+/android/app/release/
+GeneratedPluginRegistrant.java
+
+# Release packages and temporary files.
+/release/
+*.apk
+*.aab
+*.apks
+*.hprof
+*.class
+*.log
+*.tmp
+*.swp
+*.py[cod]
+__pycache__/
+.pytest_cache/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local editor configuration.
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.history/

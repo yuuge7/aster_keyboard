@@ -1,0 +1,10 @@
+# Track gradlew, gradlew.bat, and the complete gradle/wrapper directory.
+/.gradle/
+/.kotlin/
+/captures/
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+key.properties
+**/*.keystore
+**/*.jks

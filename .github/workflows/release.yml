@@ -1,0 +1,127 @@
+name: Android release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Do not add a concurrency group that cancels pending runs: every push needs
+# its own run number and release, including closely spaced pushes.
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out the exact pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Test release and signing helpers
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
+
+      - name: Bump the app version for this run
+        id: version
+        run: python3 .github/scripts/prepare_release.py
+
+      - name: Set up Java 17
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: '3.47.0'
+          cache: true
+
+      - name: Prepare Android tools
+        run: |
+          flutter config --jdk-dir="$JAVA_HOME"
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          chmod +x android/gradlew
+
+      - name: Resolve locked dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze Dart
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        run: flutter test
+
+      - name: Restore the release signing identity
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: python3 scripts/signing.py restore
+
+      - name: Test native code and lint Android release
+        working-directory: android
+        run: ./gradlew testDebugUnitTest lintRelease --no-daemon
+
+      - name: Build signed universal APK
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: flutter build apk --release --build-name="$VERSION_NAME" --build-number="$BUILD_NUMBER"
+
+      - name: Verify signature and prepare release files
+        env:
+          APK_NAME: ${{ steps.version.outputs.apk_name }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            build/app/outputs/flutter-apk/app-release.apk
+          mkdir -p release
+          cp build/app/outputs/flutter-apk/app-release.apk "release/$APK_NAME"
+          printf 'version=%s\nbuild=%s\ncommit=%s\n' "$VERSION_NAME" "$BUILD_NUMBER" "$GITHUB_SHA" > release/version.txt
+          (cd release && sha256sum "$APK_NAME" version.txt > SHA256SUMS)
+
+      - name: Create a new tag and GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_TITLE: ${{ steps.version.outputs.title }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: |
+          # A failed publication may already have created its tag. Reuse it only
+          # if it points at this commit; never move or force an existing tag.
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$GITHUB_SHA" || {
+              echo '::error::This release tag belongs to another commit. Refusing to reuse it.'
+              exit 1
+            }
+          else
+            # Creating a ref is atomic: a concurrent collision fails safely.
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA" > /dev/null
+          fi
+          printf 'Signed Android APK for Android 7.0 and newer.\n\nVersion: `%s+%s`\n\nSource: `%s`\n' \
+            "$VERSION_NAME" "$BUILD_NUMBER" "$GITHUB_SHA" > "$RUNNER_TEMP/aster-release-notes.txt"
+          # `create` fails if the release exists. Never edit releases or use
+          # --clobber, even when someone reruns a successful workflow run.
+          gh release create "$RELEASE_TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$RELEASE_TITLE" --generate-notes \
+            --notes-file "$RUNNER_TEMP/aster-release-notes.txt"
+
+      - name: Remove private signing files
+        if: always()
+        run: rm -f "$GITHUB_WORKSPACE/aster-release.jks" "$GITHUB_WORKSPACE/key.properties"
