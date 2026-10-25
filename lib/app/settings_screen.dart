@@ -196,7 +196,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       toggle(
         'suggestions',
         'Word suggestions',
-        'Show completions and spelling suggestions above the keys.',
+        'Show completions and spelling suggestions. Romanian typing searches both Romanian and English dictionaries.',
       ),
       toggle(
         'autoCorrect',

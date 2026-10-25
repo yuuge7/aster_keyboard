@@ -28,6 +28,7 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
     private lateinit var store: SettingsStore
     private var settings = KeyboardSettings()
     private lateinit var dictionaries: DictionaryRepository
+    private lateinit var multilingual: MultilingualSuggestions
     private val worker = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private var suggestionTask: Future<*>? = null
@@ -39,6 +40,7 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         store = SettingsStore(this); settings = store.read()
         store.preferences.registerOnSharedPreferenceChangeListener(this)
         dictionaries = DictionaryRepository(this)
+        multilingual = MultilingualSuggestions { dictionaries[it] }
         worker.execute {
             listOf(settings.language, if (settings.language == "en") "ro" else "en").forEach { language ->
                 runCatching { dictionaries.load(language) }.onFailure {
@@ -95,8 +97,11 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         .lines().filter { it.isNotBlank() }.toSet()
     private fun correction(word: String): String? {
         if (!profile.assistedTyping || !settings.autoCorrect) return null
-        val protected = settings.enabledLanguages.flatMap { personal(it) }.toSet()
-        val foreignWord = settings.enabledLanguages.filter { it != settings.language }.any { dictionaries[it]?.isCommon(word) == true }
+        val protectedLanguages = (settings.enabledLanguages + MultilingualSuggestions.languages(settings.language)).distinct()
+        val protected = protectedLanguages.flatMap { personal(it) }.toSet()
+        if (multilingual.protectsEnglish(word, settings.language, settings.restoreDiacritics)) return null
+        val foreignWord = settings.language != "ro" && settings.enabledLanguages.filter { it != settings.language }
+            .any { dictionaries[it]?.isCommon(word) == true }
         return if (foreignWord) null else dictionaries[settings.language]?.correction(word, settings.restoreDiacritics, protected)
     }
     override fun onText(text: String) {
@@ -146,9 +151,10 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         if (!active || !settings.suggestions || !profile.assistedTyping || word.isEmpty()) {
             keyboard?.showSuggestions(emptyList()); return
         }
-        val language = settings.language; val custom = personal(language)
+        val language = settings.language
+        val custom = MultilingualSuggestions.languages(language).associateWith { personal(it) }
         suggestionTask = worker.submit {
-            val candidates = dictionaries[language]?.suggestions(word, custom).orEmpty()
+            val candidates = multilingual.suggestions(word, language, custom)
             main.post { if (token == generation && active && profile.assistedTyping) keyboard?.showSuggestions(listOf(word) + candidates.take(2)) }
         }
     }

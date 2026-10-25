@@ -63,10 +63,10 @@ class KeyboardFeatureTest {
             } }
         }.commit()
     }
-    private fun await(condition: () -> Boolean) {
+    private fun await(message: String = "Keyboard condition was not reached within 10 seconds", condition: () -> Boolean) {
         val until = System.currentTimeMillis() + 10000
         while (System.currentTimeMillis() < until) { if (condition()) return; Thread.sleep(40) }
-        fail("Keyboard condition was not reached within 10 seconds")
+        fail(message)
     }
     private fun node(description: String): AccessibilityNodeInfo? {
         fun search(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -78,8 +78,10 @@ class KeyboardFeatureTest {
         return automation.windows.firstNotNullOfOrNull { search(it.root) }
     }
     private fun click(description: String) {
-        await { node(description) != null }
-        assertTrue("Could not click $description", node(description)!!.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        // A suggestion update can replace a node between lookup and ACTION_CLICK.
+        await("Could not click $description") {
+            node(description)?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        }
         instrumentation.waitForIdleSync()
     }
     private fun type(word: String) { word.forEach {
@@ -128,6 +130,32 @@ class KeyboardFeatureTest {
         val afterRelease = text()
         android.os.SystemClock.sleep(180)
         assertEquals("Deletion must stop on release", afterRelease, text())
+    }
+    @Test fun romanianSuggestsEnglishAndPersonalWordsWithEnglishLayoutDisabled() {
+        store.update(mapOf("language" to "ro", "englishEnabled" to false, "personalWordsEn" to "Asterium"))
+        instrumentation.waitForIdleSync()
+        type("keybord")
+        click("Insert suggestion keyboard")
+        await { text() == "keyboard " }
+        type("multumesc")
+        await { node("Insert suggestion mulțumesc") != null }
+        click("Space, hold to switch language")
+        await { text() == "keyboard mulțumesc " }
+        type("asteriu")
+        click("Insert suggestion Asterium")
+        await { text() == "keyboard mulțumesc Asterium " }
+        assertEquals("ro", store.read().language)
+        assertFalse(store.read().englishEnabled)
+    }
+    @Test fun romanianKeepsEnglishWordsAndStillRestoresCommonDiacritics() {
+        store.update(mapOf("language" to "ro", "englishEnabled" to false))
+        instrumentation.waitForIdleSync()
+        type("keyboard"); click("Space, hold to switch language")
+        await { text() == "keyboard " }
+        type("buna"); click("Space, hold to switch language")
+        await { text() == "keyboard bună " }
+        type("maine"); click("Space, hold to switch language")
+        await { text() == "keyboard bună mâine " }
     }
     @Test fun configuredHoldDelayOpensAccentsWithoutTypingTheBaseLetter() {
         store.update(mapOf("longPressDelay" to 800))
