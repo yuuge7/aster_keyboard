@@ -12,6 +12,9 @@ data class KeyboardSettings(
     val doubleSpacePeriod: Boolean = true, val restoreDiacritics: Boolean = true,
     val numberRow: Boolean = false, val haptics: Boolean = false, val sound: Boolean = false,
     val keyHeight: Int = 52, val wallpaperDim: Float = .35f,
+    val keySpacing: Int = 2, val keyCornerRadius: Int = 8,
+    val keyBorders: Boolean = false, val secondarySymbols: Boolean = true,
+    val longPressDelay: Int = 400,
     val personalWordsEn: String = "", val personalWordsRo: String = "",
 ) {
     val enabledLanguages get() = listOfNotNull("en".takeIf { englishEnabled }, "ro".takeIf { romanianEnabled })
@@ -23,6 +26,9 @@ data class KeyboardSettings(
         "numberRow" to numberRow, "haptics" to haptics, "sound" to sound, "keyHeight" to keyHeight,
         "wallpaperDim" to wallpaperDim.toDouble(), "personalWordsEn" to personalWordsEn,
         "personalWordsRo" to personalWordsRo,
+        "keySpacing" to keySpacing, "keyCornerRadius" to keyCornerRadius,
+        "keyBorders" to keyBorders, "secondarySymbols" to secondarySymbols,
+        "longPressDelay" to longPressDelay,
     )
 }
 
@@ -38,6 +44,9 @@ class SettingsStore(private val context: Context) {
             doubleSpacePeriod = p.getBoolean("doubleSpacePeriod", true), restoreDiacritics = p.getBoolean("restoreDiacritics", true),
             numberRow = p.getBoolean("numberRow", false), haptics = p.getBoolean("haptics", false), sound = p.getBoolean("sound", false),
             keyHeight = p.getInt("keyHeight", 52), wallpaperDim = p.getFloat("wallpaperDim", .35f),
+            keySpacing = p.getInt("keySpacing", 2), keyCornerRadius = p.getInt("keyCornerRadius", 8),
+            keyBorders = p.getBoolean("keyBorders", false), secondarySymbols = p.getBoolean("secondarySymbols", true),
+            longPressDelay = p.getInt("longPressDelay", 400),
             personalWordsEn = p.getString("personalWordsEn", "")!!, personalWordsRo = p.getString("personalWordsRo", "")!!,
         )
     }
@@ -53,7 +62,7 @@ class SettingsStore(private val context: Context) {
             val old = values[key]
             values[key] = when (old) {
                 is Boolean -> { require(value is Boolean); value }
-                is Int -> { require(value is Number); value.toInt().coerceIn(42, 66) }
+                is Int -> { require(value is Number); SettingsConstraints.integer(key, value) }
                 is Double -> { require(value is Number && value.toDouble().isFinite()); value.toDouble().coerceIn(0.0, .85) }
                 else -> { require(value is String); value }
             }

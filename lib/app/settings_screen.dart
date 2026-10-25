@@ -23,8 +23,52 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  double? height, dim;
+  double? dim;
+  final draftNumbers = <String, double>{};
   KeyboardSettings get settings => widget.settings;
+  KeyboardSettings get previewSettings => KeyboardSettings({
+    ...settings.values,
+    for (final entry in draftNumbers.entries) entry.key: entry.value.round(),
+  });
+  Widget numberSetting(
+    String key,
+    String title, {
+    required double min,
+    required double max,
+    required int divisions,
+    String unit = 'dp',
+  }) {
+    final value = draftNumbers[key] ?? settings.number(key);
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('$title · ${value.round()} $unit'),
+          Slider(
+            key: ValueKey('setting-$key'),
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            divisions: divisions,
+            label: '${value.round()} $unit',
+            semanticFormatterCallback: (value) =>
+                '$title ${value.round()} $unit',
+            onChanged: widget.busy
+                ? null
+                : (value) => setState(() => draftNumbers[key] = value),
+            onChangeEnd: widget.busy
+                ? null
+                : (value) async {
+                    await widget.onSave({key: value.round()});
+                    if (mounted) setState(() => draftNumbers.remove(key));
+                  },
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget section(String title) => Padding(
     padding: const EdgeInsets.only(top: 28, bottom: 8),
     child: Text(title, style: Theme.of(context).textTheme.titleLarge),
@@ -56,7 +100,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         style: TextStyle(height: 1.5),
       ),
       const SizedBox(height: 22),
-      KeyboardPreview(settings: settings),
+      KeyboardPreview(settings: previewSettings),
       section('Appearance'),
       const SizedBox(height: 6),
       SegmentedButton<String>(
@@ -123,7 +167,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       toggle(
         'romanianEnabled',
         'Română',
-        'QWERTY · ă â î ș ț · Romanian dictionary',
+        'Compact QWERTY · hold A, I, S, or T for ă â î ș ț.',
         locked: !settings.enabled('englishEnabled'),
       ),
       const SizedBox(height: 12),
@@ -197,6 +241,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'Keep 1–0 above the letters.',
       ),
       toggle(
+        'secondarySymbols',
+        'Secondary key labels',
+        'Show a small hint for numbers, accents, and punctuation available on hold.',
+      ),
+      toggle(
+        'keyBorders',
+        'Key borders',
+        'Give each key a visible outline, including over a wallpaper.',
+      ),
+      toggle(
         'haptics',
         'Vibration on keypress',
         'Use Android’s keyboard haptic feedback.',
@@ -206,23 +260,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'Sound on keypress',
         'Use Android’s key click sound and system volume.',
       ),
-      const SizedBox(height: 16),
-      Text(
-        'Key height · ${(height ?? settings.number('keyHeight')).round()} dp',
+      numberSetting('keyHeight', 'Key height', min: 42, max: 66, divisions: 12),
+      numberSetting('keySpacing', 'Key spacing', min: 0, max: 5, divisions: 5),
+      numberSetting(
+        'keyCornerRadius',
+        'Corner radius',
+        min: 0,
+        max: 18,
+        divisions: 18,
       ),
-      Slider(
-        value: height ?? settings.number('keyHeight'),
-        min: 42,
-        max: 66,
+      numberSetting(
+        'longPressDelay',
+        'Hold delay',
+        min: 200,
+        max: 800,
         divisions: 12,
-        label: '${(height ?? settings.number('keyHeight')).round()} dp',
-        onChanged: widget.busy
-            ? null
-            : (value) => setState(() => height = value),
-        onChangeEnd: (value) async {
-          await widget.onSave({'keyHeight': value.round()});
-          if (mounted) setState(() => height = null);
-        },
+        unit: 'ms',
+      ),
+      Text(
+        'Hold delay controls accented-letter menus, language switching, and the start of repeated deletion.',
+        style: Theme.of(context).textTheme.bodySmall,
       ),
       const SizedBox(height: 10),
       const Text(
@@ -250,6 +307,15 @@ class KeyboardPreview extends StatelessWidget {
     final surface = dark ? const Color(0xFF101826) : const Color(0xFFE9EFF6);
     final keyColor = dark ? const Color(0xFF233249) : Colors.white;
     final ink = dark ? const Color(0xFFE6EDF8) : const Color(0xFF1A273B);
+    final hints = <String, String>{
+      for (var i = 0; i < 10; i++) 'qwertyuiop'[i]: '${(i + 1) % 10}',
+      'a': 'ă',
+      's': 'ș',
+      'c': 'ç',
+      'n': 'ñ',
+      ',': ';',
+      '.': '?',
+    };
     Widget legend(String key) {
       final icon = switch (key) {
         '⇧' => Icons.arrow_upward_rounded,
@@ -276,16 +342,42 @@ class KeyboardPreview extends StatelessWidget {
             (key) => Expanded(
               flex: key == 'space' ? 4 : 1,
               child: Container(
-                height: 28,
+                height: 28 * settings.number('keyHeight') / 52,
                 alignment: Alignment.center,
-                margin: const EdgeInsets.all(2),
+                margin: EdgeInsets.symmetric(
+                  horizontal: settings.number('keySpacing') * .65,
+                  vertical: 2,
+                ),
                 decoration: BoxDecoration(
                   color: keyColor.withValues(
                     alpha: settings.wallpaper.isEmpty ? 1 : .85,
                   ),
-                  borderRadius: BorderRadius.circular(5),
+                  borderRadius: BorderRadius.circular(
+                    settings.number('keyCornerRadius') * .625,
+                  ),
+                  border: settings.enabled('keyBorders')
+                      ? Border.all(color: ink.withValues(alpha: .4), width: .7)
+                      : null,
                 ),
-                child: legend(key),
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Center(child: legend(key)),
+                    if (settings.enabled('secondarySymbols') &&
+                        hints.containsKey(key))
+                      Positioned(
+                        top: 1,
+                        right: 3,
+                        child: Text(
+                          hints[key]!,
+                          style: TextStyle(
+                            color: ink.withValues(alpha: .67),
+                            fontSize: 7,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           )
@@ -334,7 +426,6 @@ class KeyboardPreview extends StatelessWidget {
                     ),
                     if (settings.enabled('numberRow'))
                       row('1234567890'.split('')),
-                    if (settings.language == 'ro') row('ăâîșț'.split('')),
                     row('qwertyuiop'.split('')),
                     row('asdfghjkl'.split('')),
                     row(['⇧', ...'zxcvbnm'.split(''), '⌫']),

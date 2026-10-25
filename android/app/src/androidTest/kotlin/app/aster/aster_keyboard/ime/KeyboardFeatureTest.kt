@@ -97,11 +97,57 @@ class KeyboardFeatureTest {
     }
     @Test fun romanianDiacriticsAndLanguageSwitchUseRealKeys() {
         click("Switch English and Romanian, hold to choose another keyboard")
-        await { store.read().language == "ro" && node("ă") != null }
+        await { store.read().language == "ro" && node("a, hold for alternatives") != null }
+        assertNull("Romanian must not have a dedicated diacritics row", node("ă"))
         type("multumesc"); await { node("Insert suggestion mulțumesc") != null }
         click("Space, hold to switch language"); await { text() == "mulțumesc " }
-        "ăâîșț".forEach { click(it.toString()) }
+        listOf("a" to "ă", "a" to "â", "i" to "î", "s" to "ș", "t" to "ț").forEach { (key, accent) ->
+            assertTrue(node("$key, hold for alternatives")!!.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK))
+            click(accent)
+        }
         await { text() == "mulțumesc ăâîșț" }
+    }
+    @Test fun configuredHoldDelayAndReleaseControlRepeatedDeletion() {
+        store.update(mapOf("longPressDelay" to 800))
+        instrumentation.waitForIdleSync()
+        type("abcdef")
+        val bounds = android.graphics.Rect()
+        node("Delete, hold to repeat")!!.getBoundsInScreen(bounds)
+        val start = android.os.SystemClock.uptimeMillis()
+        fun touch(action: Int) {
+            val event = android.view.MotionEvent.obtain(start, android.os.SystemClock.uptimeMillis(),
+                action, bounds.exactCenterX(), bounds.exactCenterY(), 0)
+            try { assertTrue(automation.injectInputEvent(event, true)) } finally { event.recycle() }
+        }
+        touch(android.view.MotionEvent.ACTION_DOWN)
+        android.os.SystemClock.sleep(200)
+        assertEquals("abcdef", text())
+        android.os.SystemClock.sleep(750)
+        assertTrue("Holding should start repeat after the configured delay", text().length < 6)
+        touch(android.view.MotionEvent.ACTION_UP)
+        val afterRelease = text()
+        android.os.SystemClock.sleep(180)
+        assertEquals("Deletion must stop on release", afterRelease, text())
+    }
+    @Test fun configuredHoldDelayOpensAccentsWithoutTypingTheBaseLetter() {
+        store.update(mapOf("longPressDelay" to 800))
+        instrumentation.waitForIdleSync()
+        val bounds = android.graphics.Rect()
+        node("a, hold for alternatives")!!.getBoundsInScreen(bounds)
+        val start = android.os.SystemClock.uptimeMillis()
+        fun touch(action: Int) {
+            val event = android.view.MotionEvent.obtain(start, android.os.SystemClock.uptimeMillis(),
+                action, bounds.exactCenterX(), bounds.exactCenterY(), 0)
+            try { assertTrue(automation.injectInputEvent(event, true)) } finally { event.recycle() }
+        }
+        touch(android.view.MotionEvent.ACTION_DOWN)
+        android.os.SystemClock.sleep(200)
+        assertNull("Accents must wait for the configured hold delay", node("ă"))
+        assertEquals("", text())
+        await { node("ă") != null }
+        touch(android.view.MotionEvent.ACTION_UP)
+        click("ă")
+        await { text() == "ă" }
     }
     @Test fun commaSpacingAndEmojiPanelWorkInRealEditor() {
         type("hello"); click(",, hold for alternatives")

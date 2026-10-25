@@ -7,7 +7,7 @@ A private, offline Android keyboard with a Flutter companion app. The keyboard r
 
 ## Features
 
-- English and Romanian QWERTY, with dedicated `ă â î ș ț` keys, accented-letter popups, and quick language switching.
+- Compact English and Romanian QWERTY, with accented-letter popups and quick language switching. Romanian has no extra diacritics row; hold A for `ă/â`, I for `î`, S for `ș`, and T for `ț`.
 - Offline suggestions and autocorrect using bundled 50,000-entry frequency lists for each language, with immediate Backspace undo and an explicit personal dictionary.
 - System, light, and dark appearance in both the keyboard and companion, plus your own photo wallpaper with adjustable dimming.
 - An emoji panel with categories, recent emoji, flags, and skin-tone variants for supported gestures.
@@ -18,7 +18,7 @@ A private, offline Android keyboard with a Flutter companion app. The keyboard r
 - Cursor movement, hold-to-select, select all, keyboard switching, and dismissal.
 - Sensitive-field handling and a compact landscape layout.
 - Guided activation, live keyboard status, a typing playground, native Android test fields, and privacy/license information.
-- Controls for punctuation spacing, double-space periods, a number row, key height, sound, and vibration.
+- Controls for punctuation spacing, double-space periods, a number row, key height/spacing/corner radius, key borders, secondary labels, hold timing, sound, and vibration.
 
 Autocorrect is a conservative, local dictionary system for spelling mistakes and common forms, rather than grammar or sentence rewriting. Device/OEM compatibility and accessibility testing remain ongoing work.
 
@@ -47,7 +47,8 @@ Open **Settings** in the companion, or tap the keyboard's gear button. Preferenc
 - **Languages:** enable English and/or Romanian, keeping at least one enabled. Tap the language name on the keyboard, or hold Space, to cycle enabled languages. Hold the language name to open Android's keyboard picker. Romanian uses comma-below `ș` and `ț`; legacy cedilla forms are normalized in dictionary lookups.
 - **Autocorrect:** type a space or punctuation to accept a likely correction; press Backspace immediately to restore your original spelling. Tap a suggestion to insert it explicitly. Romanian diacritic restoration can be disabled separately. Unknown names can be added manually to the personal dictionary, with one word per line, up to 500 per language.
 - **Typing:** independently control suggestions, autocorrect, automatic capitals, spaces after `, ; : ! ?`, and double-space periods. Numeric separators such as `1,5` and `12:30` stay intact. Hold quote or dash keys on the symbols page for typographic forms, including Romanian `„…”` quotes. Automatic assistance is disabled in password/private fields, email addresses, URLs, numeric editors, and editors requesting no suggestions.
-- **Layout:** enable the number row, adjust key height, and choose sound/vibration feedback. Hold letters for accented characters or top-row numbers. Hold Delete to repeat deletion; use cursor arrows and hold them to select.
+- **Layout:** enable the number row and adjust key height (42–66 dp), horizontal key spacing (0–5 dp per side), and corner radius (0–18 dp). Toggle key borders and small secondary labels. The appearance preview reflects these controls while adjusting them. Romanian uses the same compact rows as English, with diacritics on long press.
+- **Feedback and holds:** choose sound/vibration feedback and a 200–800 ms hold delay for accented-letter popups, language switching, selection and the start of repeating deletion. A normal tap remains immediate on release, and releasing Delete stops repetition.
 - **Emoji:** tap **☺**, choose a category, and scroll the grid. Supported hand gestures offer skin tones on long press. **ABC** returns to letters. Recent emoji are saved only when selected in ordinary text fields.
 
 The **Try it** screen includes English/Romanian examples and native test fields. Wallpaper and settings survive app restarts; uninstalling clears this private data.

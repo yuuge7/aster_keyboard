@@ -1,4 +1,5 @@
 import 'package:aster_keyboard/app/aster_app.dart';
+import 'package:aster_keyboard/app/settings_screen.dart';
 import 'package:aster_keyboard/services/keyboard_bridge.dart';
 import 'package:aster_keyboard/services/keyboard_settings.dart';
 import 'package:flutter/material.dart';
@@ -271,6 +272,89 @@ void main() {
       ThemeMode.dark,
     );
     expect(calls.where((call) => call == 'getSettings').length, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Key appearance and hold timing controls save through the shared store',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(const AsterApp());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+      final scrollable = find
+          .descendant(
+            of: find.byKey(const PageStorageKey('keyboardSettings')),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      Future<void> reveal(String key) async {
+        final target = find.byKey(ValueKey('setting-$key'));
+        await tester.scrollUntilVisible(target, 250, scrollable: scrollable);
+        await Scrollable.ensureVisible(tester.element(target), alignment: .4);
+        await tester.pumpAndSettle();
+      }
+
+      await reveal('secondarySymbols');
+      await tester.tap(find.byKey(const ValueKey('setting-secondarySymbols')));
+      await tester.pumpAndSettle();
+      expect(preferences['secondarySymbols'], false);
+      await reveal('keyBorders');
+      await tester.tap(find.byKey(const ValueKey('setting-keyBorders')));
+      await tester.pumpAndSettle();
+      expect(preferences['keyBorders'], true);
+      for (final key in ['keySpacing', 'keyCornerRadius', 'longPressDelay']) {
+        await reveal(key);
+        final old = preferences[key] as int;
+        await tester.drag(
+          find.byKey(ValueKey('setting-$key')),
+          const Offset(120, 0),
+        );
+        await tester.pumpAndSettle();
+        expect(preferences[key], isA<int>());
+        expect(preferences[key] as int, greaterThan(old));
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('Romanian preview keeps the compact letter layout', (
+    tester,
+  ) async {
+    Future<void> preview(String language, {bool numbers = false}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: SizedBox(
+                width: 320,
+                child: KeyboardPreview(
+                  settings: KeyboardSettings({
+                    'language': language,
+                    'numberRow': numbers,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await preview('en');
+    final englishHeight = tester.getSize(find.byType(KeyboardPreview)).height;
+    await preview('ro');
+    expect(tester.getSize(find.byType(KeyboardPreview)).height, englishHeight);
+    await preview('ro', numbers: true);
+    expect(
+      tester.getSize(find.byType(KeyboardPreview)).height,
+      greaterThan(englishHeight),
+    );
     expect(tester.takeException(), isNull);
   });
 }

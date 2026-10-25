@@ -55,13 +55,21 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         setOnApplyWindowInsetsListener { _, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
                 val bars = insets.getInsets(WindowInsets.Type.navigationBars() or WindowInsets.Type.displayCutout())
-                setPadding(dp(4) + bars.left, dp(3), dp(4) + bars.right, dp(6) + bars.bottom)
+                applyKeyboardInsets(bars.left, bars.right, bars.bottom)
             } else {
                 @Suppress("DEPRECATION")
-                setPadding(dp(4) + insets.systemWindowInsetLeft, dp(3), dp(4) + insets.systemWindowInsetRight, dp(6) + insets.systemWindowInsetBottom)
+                applyKeyboardInsets(insets.systemWindowInsetLeft, insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
             }
             insets
         }
+    }
+    private fun applyKeyboardInsets(left: Int, right: Int, bottom: Int) {
+        val start = dp(4) + left; val end = dp(4) + right; val lower = dp(6) + bottom
+        if (paddingLeft == start && paddingRight == end && paddingBottom == lower) return
+        setPadding(start, dp(3), end, lower)
+        // Insets can arrive inside the first window traversal, after its height
+        // was chosen. Request a fresh traversal so the last key row stays visible.
+        post { requestLayout() }
     }
     fun configure(editor: EditorProfile, shift: ShiftMode, preferences: KeyboardSettings, wallpaper: File?, recents: List<String>) {
         cancelPendingTouches(); profile = editor; shiftMode = shift; settings = preferences; recent = recents; page = 0
@@ -88,7 +96,10 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     }
     fun updateShift(mode: ShiftMode) {
         shiftMode = mode
-        letters.forEach { (view, value) -> view.text = if (mode == ShiftMode.OFF) value else value.uppercase() }
+        letters.forEach { (view, value) ->
+            view.text = if (mode == ShiftMode.OFF) value else value.uppercase()
+            (view as? KeyLabelView)?.uppercaseHint = mode != ShiftMode.OFF
+        }
         shiftKey?.apply {
             text = if (mode == ShiftMode.LOCKED) "⇪" else "⇧"
             contentDescription = when (mode) { ShiftMode.OFF -> "Shift"; ShiftMode.ONCE -> "Shift on"; ShiftMode.LOCKED -> "Caps lock on" }
@@ -135,7 +146,6 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     }
     private fun alphabet() {
         if (settings.numberRow) row("1234567890".map { Key(it.toString()) }, compact = true)
-        if (settings.language == "ro") row("ăâîșț".map { Key(it.toString()) }, compact = true)
         row("qwertyuiop".mapIndexed { index, c -> Key(c.toString(), alternates = listOf(if (index == 9) "0" else "${index + 1}") + accents(c)) })
         row("asdfghjkl".map { Key(it.toString(), alternates = accents(it)) }, inset = 12)
         row(listOf(Key("⇧", command = "shift", weight = 1.35f)) + "zxcvbnm".map { Key(it.toString(), alternates = accents(it)) } + Key("⌫", command = "delete", weight = 1.35f))
@@ -205,12 +215,18 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     private fun row(keys: List<Key>, inset: Int = 0, compact: Boolean = false) {
         val line = LinearLayout(context).apply { setPadding(dp(inset), 0, dp(inset), 0); gravity = Gravity.CENTER; isBaselineAligned = false }
         val height = if (compact) if (landscape) 34 else 40 else if (landscape) 40 else settings.keyHeight
-        keys.forEach { line.addView(makeKey(it), LayoutParams(0, dp(height), it.weight).apply { setMargins(dp(2), dp(3), dp(2), dp(3)) }) }
+        keys.forEach { line.addView(makeKey(it), LayoutParams(0, dp(height), it.weight).apply {
+            setMargins(dp(settings.keySpacing), dp(3), dp(settings.keySpacing), dp(3))
+        }) }
         addView(line, LayoutParams(-1, -2))
     }
-    private fun backgroundFor(color: Int): RippleDrawable {
+    private fun backgroundFor(color: Int, keycap: Boolean = true): RippleDrawable {
         val alpha = if (photo != null) 215 else 255
-        val shape = GradientDrawable().apply { setColor((color and 0x00FFFFFF) or (alpha shl 24)); cornerRadius = dp(8).toFloat() }
+        val shape = GradientDrawable().apply {
+            setColor((color and 0x00FFFFFF) or (alpha shl 24))
+            cornerRadius = dp(if (keycap) settings.keyCornerRadius else 8).toFloat()
+            if (keycap && settings.keyBorders) setStroke(dp(1), (ink and 0x00FFFFFF) or (100 shl 24))
+        }
         return RippleDrawable(ColorStateList.valueOf(Color.argb(50, 100, 150, 230)), shape, null)
     }
     private fun feedback(view: View) {
@@ -227,7 +243,10 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             setOnClickListener { feedback(this); if (emoji) listener.onEmoji(value) else listener.onText(value); popup?.dismiss() }
         }, LayoutParams(dp(44), dp(48))) }
         val scroller = HorizontalScrollView(context).apply { addView(line) }
-        popup = PopupWindow(scroller, minOf(dp(44 * values.size + 8), resources.displayMetrics.widthPixels - dp(12)), dp(56), true).apply {
+        // The editor must keep input focus while alternatives are open. A focusable
+        // popup restarts the input session and dismisses itself on recent Android.
+        popup = PopupWindow(scroller, minOf(dp(44 * values.size + 8), resources.displayMetrics.widthPixels - dp(12)), dp(56), false).apply {
+            inputMethodMode = PopupWindow.INPUT_METHOD_NOT_NEEDED
             setBackgroundDrawable(ColorDrawable(modifier)); isOutsideTouchable = true; elevation = dp(8).toFloat()
             showAsDropDown(anchor, -dp(12), -anchor.height - dp(56))
         }
@@ -235,12 +254,16 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     @SuppressLint("ClickableViewAccessibility")
     private fun makeKey(key: Key, toolbar: Boolean = false): TextView {
         val command = key.command
-        val view = TextView(context).apply {
+        val secondary = key.alternates.firstOrNull()?.takeIf {
+            settings.secondarySymbols && !toolbar && key.value.length == 1
+        }
+        val view: TextView = KeyLabelView(context, secondary)
+        view.apply {
             text = key.label; gravity = Gravity.CENTER
             textSize = if (toolbar) 23f else if (key.label.length > 2) 13f else 22f
             setTextColor(if (command == "enter") if (dark) surface else Color.WHITE else ink)
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            background = backgroundFor(when { command == "enter" -> accent; toolbar -> surface; command != null || key.value == " " -> modifier; else -> keyColor })
+            background = backgroundFor(when { command == "enter" -> accent; toolbar -> surface; command != null || key.value == " " -> modifier; else -> keyColor }, keycap = !toolbar)
             isFocusable = true; isClickable = true
             contentDescription = when (command) {
                 "delete" -> "Delete, hold to repeat"; "enter" -> if (profile.actionLabel == "↵") "Enter" else profile.actionLabel
@@ -266,7 +289,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             var repeated = false
             val start = Runnable { repeated = true; feedback(view); repeat.run() }
             view.setOnTouchListener { _, event -> when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { repeated = false; view.isPressed = true; handler.postDelayed(start, 380); true }
+                MotionEvent.ACTION_DOWN -> { repeated = false; view.isPressed = true; handler.postDelayed(start, settings.longPressDelay.toLong()); true }
                 MotionEvent.ACTION_UP -> { handler.removeCallbacks(start); handler.removeCallbacks(repeat); view.isPressed = false; if (!repeated) view.performClick(); true }
                 MotionEvent.ACTION_CANCEL -> { handler.removeCallbacks(start); handler.removeCallbacks(repeat); view.isPressed = false; true }
                 MotionEvent.ACTION_MOVE -> { if (event.x !in 0f..view.width.toFloat() || event.y !in 0f..view.height.toFloat()) { handler.removeCallbacks(start); handler.removeCallbacks(repeat); view.isPressed = false; repeated = true }; true }
@@ -279,6 +302,42 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
                     key.value == " " -> listener.onCommand("switch")
                     else -> listener.onCommand(command!!, true) }
                 true
+            }
+            // Keep accessibility long-click actions, while physical touch follows
+            // Aster's configurable delay instead of Android's fixed view timeout.
+            var pressed = false
+            var longPerformed = false
+            val trigger = Runnable {
+                if (pressed && view.isAttachedToWindow) {
+                    longPerformed = view.performLongClick()
+                    if (longPerformed) view.isPressed = false
+                }
+            }
+            view.setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        pressed = true; longPerformed = false; view.isPressed = true
+                        view.drawableHotspotChanged(event.x, event.y)
+                        handler.postDelayed(trigger, settings.longPressDelay.toLong()); true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (event.x !in 0f..view.width.toFloat() || event.y !in 0f..view.height.toFloat()) {
+                            pressed = false; view.isPressed = false; handler.removeCallbacks(trigger)
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        handler.removeCallbacks(trigger)
+                        val tap = pressed && !longPerformed
+                        pressed = false; view.isPressed = false
+                        if (tap) view.performClick()
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        pressed = false; view.isPressed = false; handler.removeCallbacks(trigger); true
+                    }
+                    else -> false
+                }
             }
         }
         return view

@@ -7,6 +7,7 @@ import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.aster.aster_keyboard.settings.SettingsStore
+import app.aster.aster_keyboard.settings.KeyboardSettings
 import app.aster.aster_keyboard.settings.WallpaperImporter
 import java.io.File
 import org.junit.Assert.*
@@ -16,6 +17,31 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SettingsAndWallpaperTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    @Test fun romanianKeepsTheSameCompactHeightAndNumberRowRemainsOptional() {
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val keyboard = AsterKeyboardView(context, object : AsterKeyboardView.Listener {
+                override fun onText(text: String) = Unit
+                override fun onCommand(command: String, longPress: Boolean) = Unit
+                override fun onSuggestion(word: String) = Unit
+                override fun onEmoji(emoji: String) = Unit
+            })
+            fun height(language: String, numbers: Boolean = false): Int {
+                keyboard.configure(EditorProfile(), ShiftMode.OFF, KeyboardSettings(
+                    language = language, numberRow = numbers, suggestions = false,
+                    keySpacing = 5, keyCornerRadius = 18, keyBorders = true,
+                ), null, emptyList())
+                val width = (360 * context.resources.displayMetrics.density).toInt()
+                keyboard.measure(android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY),
+                    android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED))
+                keyboard.layout(0, 0, width, keyboard.measuredHeight)
+                assertEquals(width, keyboard.measuredWidth)
+                return keyboard.measuredHeight
+            }
+            val englishHeight = height("en")
+            assertEquals(englishHeight, height("ro"))
+            assertTrue(height("ro", true) > englishHeight)
+        }
+    }
     @Test fun wallpaperImportResizesRotatesAndStripsMetadata() {
         val output = File(context.filesDir, "keyboard-wallpaper.jpg")
         val backup = output.takeIf { it.exists() }?.readBytes()
@@ -50,10 +76,15 @@ class SettingsAndWallpaperTest {
         try {
             store.update(mapOf("theme" to "dark", "language" to "ro", "romanianEnabled" to true,
                 "autoCapitalization" to false, "keyHeight" to 999,
+                "keySpacing" to 4, "keyCornerRadius" to 12, "keyBorders" to true,
+                "secondarySymbols" to false, "longPressDelay" to 650,
                 "personalWordsRo" to "Andreea\nȘtefan\nAndreea"))
             val restored = SettingsStore(context).read()
             assertEquals("dark", restored.theme); assertEquals("ro", restored.language)
             assertFalse(restored.autoCapitalization); assertEquals(66, restored.keyHeight)
+            assertEquals(4, restored.keySpacing); assertEquals(12, restored.keyCornerRadius)
+            assertTrue(restored.keyBorders); assertFalse(restored.secondarySymbols)
+            assertEquals(650, restored.longPressDelay)
             assertEquals("Andreea\nȘtefan", restored.personalWordsRo)
             try { store.update(mapOf("englishEnabled" to false, "romanianEnabled" to false)); fail("Disabled every language") }
             catch (_: IllegalArgumentException) { assertTrue(store.read().romanianEnabled) }
