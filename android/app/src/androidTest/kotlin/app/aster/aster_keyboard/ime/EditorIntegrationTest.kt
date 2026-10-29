@@ -34,6 +34,12 @@ class EditorIntegrationTest {
         assertEquals(0, connection.reads)
         assertEquals(2, connection.keys)
     }
+    @Test fun cursorDraggingUsesKeyEventsWithoutReadingEditorContents() {
+        val connection = RecordingConnection()
+        InputConnectionController { connection }.moveBy(-3)
+        assertEquals(0, connection.reads)
+        assertEquals(6, connection.keys)
+    }
     @Test fun deletionReplacesASelection() {
         val connection = RecordingConnection().apply { selected = "word" }
         InputConnectionController { connection }.delete(false)

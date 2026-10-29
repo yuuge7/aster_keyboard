@@ -584,9 +584,9 @@ class _KeyboardHomeState extends State<KeyboardHome>
         'Settings, your chosen wallpaper, explicitly added dictionary words, and recent emoji are saved privately. Wallpapers are copied without their location metadata. Typed conversations are never saved.',
       ),
       privacyItem(
-        Icons.content_paste_off_outlined,
-        'No clipboard collection',
-        'There is no clipboard history, account, advertising, analytics, or automatic learning from your typing.',
+        Icons.content_paste_outlined,
+        'Clipboard, under your control',
+        'Clipboard history is off by default. Open its panel to paste your current text, or enable local history for up to 20 clips. Unpinned clips expire after 1 hour; pinned clips stay until removed. Turning history off clears saved clips. Private fields and clips marked sensitive are excluded. There are no accounts, ads, analytics, or automatic learning from your typing.',
       ),
       privacyItem(
         Icons.info_outline,

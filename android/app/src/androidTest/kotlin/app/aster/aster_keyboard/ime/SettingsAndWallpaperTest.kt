@@ -78,6 +78,7 @@ class SettingsAndWallpaperTest {
                 "autoCapitalization" to false, "keyHeight" to 999,
                 "keySpacing" to 4, "keyCornerRadius" to 12, "keyBorders" to true,
                 "secondarySymbols" to false, "longPressDelay" to 650,
+                "showToolbar" to false, "clipboardHistoryEnabled" to true,
                 "personalWordsRo" to "Andreea\nȘtefan\nAndreea"))
             val restored = SettingsStore(context).read()
             assertEquals("dark", restored.theme); assertEquals("ro", restored.language)
@@ -85,6 +86,7 @@ class SettingsAndWallpaperTest {
             assertEquals(4, restored.keySpacing); assertEquals(12, restored.keyCornerRadius)
             assertTrue(restored.keyBorders); assertFalse(restored.secondarySymbols)
             assertEquals(650, restored.longPressDelay)
+            assertFalse(restored.showToolbar); assertTrue(restored.clipboardHistoryEnabled)
             assertEquals("Andreea\nȘtefan", restored.personalWordsRo)
             try { store.update(mapOf("englishEnabled" to false, "romanianEnabled" to false)); fail("Disabled every language") }
             catch (_: IllegalArgumentException) { assertTrue(store.read().romanianEnabled) }

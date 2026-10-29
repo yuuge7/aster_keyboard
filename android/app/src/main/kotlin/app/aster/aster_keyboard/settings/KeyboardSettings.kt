@@ -15,6 +15,7 @@ data class KeyboardSettings(
     val keySpacing: Int = 2, val keyCornerRadius: Int = 8,
     val keyBorders: Boolean = false, val secondarySymbols: Boolean = true,
     val longPressDelay: Int = 400,
+    val showToolbar: Boolean = true, val clipboardHistoryEnabled: Boolean = false,
     val personalWordsEn: String = "", val personalWordsRo: String = "",
 ) {
     val enabledLanguages get() = listOfNotNull("en".takeIf { englishEnabled }, "ro".takeIf { romanianEnabled })
@@ -29,6 +30,7 @@ data class KeyboardSettings(
         "keySpacing" to keySpacing, "keyCornerRadius" to keyCornerRadius,
         "keyBorders" to keyBorders, "secondarySymbols" to secondarySymbols,
         "longPressDelay" to longPressDelay,
+        "showToolbar" to showToolbar, "clipboardHistoryEnabled" to clipboardHistoryEnabled,
     )
 }
 
@@ -47,6 +49,8 @@ class SettingsStore(private val context: Context) {
             keySpacing = p.getInt("keySpacing", 2), keyCornerRadius = p.getInt("keyCornerRadius", 8),
             keyBorders = p.getBoolean("keyBorders", false), secondarySymbols = p.getBoolean("secondarySymbols", true),
             longPressDelay = p.getInt("longPressDelay", 400),
+            showToolbar = p.getBoolean("showToolbar", true),
+            clipboardHistoryEnabled = p.getBoolean("clipboardHistoryEnabled", false),
             personalWordsEn = p.getString("personalWordsEn", "")!!, personalWordsRo = p.getString("personalWordsRo", "")!!,
         )
     }
@@ -86,6 +90,7 @@ class SettingsStore(private val context: Context) {
                 is String -> putString(key, value)
             } }
         }.apply()
+        if (patch["clipboardHistoryEnabled"] == false) ClipboardStore(context).clear()
     }
     fun wallpaperFile(): File? = File(context.filesDir, "keyboard-wallpaper.jpg").takeIf { it.isFile }
     fun removeWallpaper() {
@@ -96,4 +101,6 @@ class SettingsStore(private val context: Context) {
     fun rememberEmoji(emoji: String) {
         preferences.edit().putString("recentEmoji", (listOf(emoji) + recentEmoji()).distinct().take(24).joinToString("|")).apply()
     }
+    fun emojiCategory(): String = preferences.getString("emojiCategory", "Recent") ?: "Recent"
+    fun rememberEmojiCategory(category: String) { preferences.edit().putString("emojiCategory", category).apply() }
 }

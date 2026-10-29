@@ -11,6 +11,14 @@ class WordLexiconTest {
         assertEquals("the", english.correction("teh")); assertEquals("and", english.correction("adn"))
         assertEquals("world", english.correction("wrold")); assertEquals("receive", english.correction("recieve"))
     }
+    @Test fun immediateCorrectionsKeepCommonFormsAndLeaveOtherSearchesToTheWorker() {
+        assertEquals("The", english.immediateCorrection("Teh"))
+        assertEquals("mulțumesc", romanian.immediateCorrection("multumesc"))
+        assertNull(romanian.immediateCorrection("multumesc", restoreDiacritics = false))
+        assertNull(english.immediateCorrection("tEh"))
+        assertNull(english.immediateCorrection("wrold"))
+        assertEquals("world", english.correction("wrold"))
+    }
     @Test fun knownWordsAndPersonalNamesAreProtected() {
         assertNull(english.correction("cot")); assertNull(english.correction("teh", protected = setOf("teh")))
     }

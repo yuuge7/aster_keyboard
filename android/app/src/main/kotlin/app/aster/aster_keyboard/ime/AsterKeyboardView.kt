@@ -11,6 +11,7 @@ import android.graphics.drawable.RippleDrawable
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -28,28 +29,44 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         fun onCommand(command: String, longPress: Boolean = false)
         fun onSuggestion(word: String)
         fun onEmoji(emoji: String)
+        fun onEmojiCategory(category: String) {}
+        fun onClipboardPaste(text: String) {}
+        fun onClipboardAction(action: String, text: String) {}
+        fun onCursorMove(steps: Int) {}
     }
     private data class Key(val label: String, val value: String = label, val command: String? = null,
         val weight: Float = 1f, val alternates: List<String> = emptyList())
     private val handler = Handler(Looper.getMainLooper())
+    private val touches = KeyTouchCoordinator()
     private val letters = mutableListOf<Pair<TextView, String>>()
     private var shiftKey: TextView? = null
     private var suggestions: LinearLayout? = null
+    private var toolbarRow: LinearLayout? = null
+    private var lastKeyTouch = -1000L
+    private val suggestionVisibility = Runnable { applySuggestionVisibility() }
     private var popup: PopupWindow? = null
     private var profile = EditorProfile()
     private var settings = KeyboardSettings()
     private var shiftMode = ShiftMode.OFF
+    private var drawnShift: ShiftMode? = null
+    private var suggestionWords = emptyList<String>()
+    private val suggestionButtons = mutableListOf<TextView>()
     private var page = 0
-    private var emojiCategory = "Faces"
+    private var emojiCategory = "Recent"
     private var recent = emptyList<String>()
+    private var clips = emptyList<ClipboardEntry>()
+    private var historyEnabled = false
+    val isClipboardOpen get() = page == 4
     private var photo: Bitmap? = null
     private var photoStamp = ""
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val photoBounds = RectF()
     private var dark = false
     private var ink = 0; private var surface = 0; private var modifier = 0; private var accent = 0; private var keyColor = 0
     private val landscape get() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     init {
+        isMotionEventSplittingEnabled = true
         orientation = VERTICAL; layoutDirection = View.LAYOUT_DIRECTION_LTR; setWillNotDraw(false)
         setPadding(dp(4), dp(3), dp(4), dp(6))
         setOnApplyWindowInsetsListener { _, insets ->
@@ -71,8 +88,10 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         // was chosen. Request a fresh traversal so the last key row stays visible.
         post { requestLayout() }
     }
-    fun configure(editor: EditorProfile, shift: ShiftMode, preferences: KeyboardSettings, wallpaper: File?, recents: List<String>) {
+    fun configure(editor: EditorProfile, shift: ShiftMode, preferences: KeyboardSettings, wallpaper: File?, recents: List<String>, lastEmojiCategory: String = "Recent") {
         cancelPendingTouches(); profile = editor; shiftMode = shift; settings = preferences; recent = recents; page = 0
+        clips = emptyList(); historyEnabled = preferences.clipboardHistoryEnabled
+        emojiCategory = lastEmojiCategory.takeIf { it == "Recent" || it in EmojiCatalog.categories } ?: "Recent"
         dark = settings.theme == "dark" || settings.theme == "system" && resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         ink = Color.parseColor(if (dark) "#E6EDF8" else "#1A273B")
         surface = Color.parseColor(if (dark) "#101826" else "#E9EFF6")
@@ -90,12 +109,15 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         photo?.takeIf { !it.isRecycled && width > 0 && height > 0 }?.let { bitmap ->
             val scale = maxOf(width.toFloat() / bitmap.width, height.toFloat() / bitmap.height)
             val w = bitmap.width * scale; val h = bitmap.height * scale
-            canvas.drawBitmap(bitmap, null, RectF((width - w) / 2, (height - h) / 2, (width + w) / 2, (height + h) / 2), paint)
+            photoBounds.set((width - w) / 2, (height - h) / 2, (width + w) / 2, (height + h) / 2)
+            canvas.drawBitmap(bitmap, null, photoBounds, paint)
             canvas.drawColor(Color.argb((settings.wallpaperDim * 255).toInt(), 0, 0, 0))
         }
     }
     fun updateShift(mode: ShiftMode) {
         shiftMode = mode
+        if (drawnShift == mode) return
+        drawnShift = mode
         letters.forEach { (view, value) ->
             view.text = if (mode == ShiftMode.OFF) value else value.uppercase()
             (view as? KeyLabelView)?.uppercaseHint = mode != ShiftMode.OFF
@@ -107,42 +129,78 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             setTextColor(if (mode == ShiftMode.OFF) ink else if (dark) surface else Color.WHITE)
         }
     }
-    fun cancelPendingTouches() { handler.removeCallbacksAndMessages(null); popup?.dismiss(); popup = null }
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        lastKeyTouch = SystemClock.uptimeMillis()
+        if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) touches.finishRolling()
+        val handled = super.dispatchTouchEvent(event)
+        if (!settings.showToolbar && suggestions != null) {
+            handler.removeCallbacks(suggestionVisibility); handler.postDelayed(suggestionVisibility, 500)
+        }
+        return handled
+    }
+    fun cancelPendingTouches() { touches.cancelAll(); handler.removeCallbacksAndMessages(null); popup?.dismiss(); popup = null }
     override fun onDetachedFromWindow() { cancelPendingTouches(); super.onDetachedFromWindow() }
     private fun render() {
-        cancelPendingTouches(); removeAllViews(); letters.clear(); shiftKey = null; suggestions = null
-        toolbar()
+        cancelPendingTouches(); removeAllViews(); letters.clear(); shiftKey = null; suggestions = null; drawnShift = null
+        suggestionButtons.clear(); suggestionWords = emptyList(); toolbarRow = null
+        val topBar = if (settings.showToolbar) FrameLayout(context).also { strip ->
+            toolbarRow = toolbar().also { strip.addView(it, FrameLayout.LayoutParams(-1, -1)) }
+            addView(strip, LayoutParams(-1, dp(42)))
+        } else null
         if (page == 3) { emojiPanel(); return }
+        if (page == 4) { clipboardPanel(); return }
+        if (page == 5) { toolsPanel(); return }
         if (profile.assistedTyping && settings.suggestions && profile.kind == EditorKind.TEXT) {
-            suggestions = LinearLayout(context).apply { gravity = Gravity.CENTER; isBaselineAligned = false }
-            addView(suggestions, LayoutParams(-1, dp(if (landscape) 32 else 40)))
+            suggestions = LinearLayout(context).apply { gravity = Gravity.CENTER; isBaselineAligned = false; visibility = GONE }
+            if (topBar != null) topBar.addView(suggestions, FrameLayout.LayoutParams(-1, -1))
+            else addView(suggestions, LayoutParams(-1, dp(if (landscape) 32 else 40)))
+            repeat(3) {
+                val button = TextView(context).apply {
+                    textSize = 15f; setTextColor(ink); gravity = Gravity.CENTER
+                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                    setPadding(dp(6), 0, dp(6), 0); background = backgroundFor(modifier); isClickable = true
+                    setOnClickListener { if (text.isNotEmpty()) { feedback(this); listener.onSuggestion(text.toString()) } }
+                }
+                suggestionButtons.add(button)
+                suggestions!!.addView(button, LayoutParams(0, -1, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
+            }
+            if (topBar != null) suggestions!!.addView(makeKey(Key("☷", command = "tools"), toolbar = true), LayoutParams(dp(38), -1))
         }
         if (profile.kind in listOf(EditorKind.NUMBER, EditorKind.PHONE)) numberPad()
         else if (page == 0) alphabet() else symbols()
         updateShift(shiftMode)
     }
-    private fun toolbar() {
+    private fun toolbar(): LinearLayout {
         val row = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL; isBaselineAligned = false }
         row.addView(makeKey(Key(if (profile.sensitive) "Private field" else if (settings.language == "ro") "Română ▾" else "English ▾", command = "switch"), toolbar = true).apply { textSize = 13f }, LayoutParams(0, dp(42), 1f))
-        listOf(Key("‹", command = "left"), Key("›", command = "right"), Key("☷", command = "selectAll"),
+        listOf(Key("‹", command = "left"), Key("›", command = "right"), Key("☷", command = "tools"), Key("▣", command = "clipboard"),
             Key("⚙", command = "settings"), Key("⌄", command = "hide")).forEach {
             row.addView(makeKey(it, toolbar = true), LayoutParams(dp(38), dp(42)))
         }
-        addView(row)
+        return row
     }
     fun showSuggestions(words: List<String>) {
-        val row = suggestions ?: return
-        row.removeAllViews()
-        words.distinct().take(3).forEach { word ->
-            val view = TextView(context).apply {
-                text = word; textSize = 15f; setTextColor(ink); gravity = Gravity.CENTER
-                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                setPadding(dp(6), 0, dp(6), 0); background = backgroundFor(modifier)
-                contentDescription = "Insert suggestion $word"; isClickable = true
-                setOnClickListener { feedback(this); listener.onSuggestion(word) }
-            }
-            row.addView(view, LayoutParams(0, -1, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
+        if (suggestions == null) return
+        val next = words.distinct().take(3)
+        if (suggestionWords == next) return
+        suggestionWords = next
+        applySuggestionVisibility()
+        suggestionButtons.forEachIndexed { index, button ->
+            val word = next.getOrNull(index).orEmpty()
+            if (button.text.toString() != word) { button.text = word; button.contentDescription = "Insert suggestion $word" }
+            button.visibility = if (word.isEmpty()) INVISIBLE else VISIBLE
         }
+    }
+    private fun applySuggestionVisibility() {
+        val row = suggestions ?: return
+        val visibility = if (suggestionWords.isEmpty()) GONE else VISIBLE
+        if (toolbarRow == null && row.visibility != visibility && (touches.hasTouches || SystemClock.uptimeMillis() - lastKeyTouch < 500)) {
+            handler.removeCallbacks(suggestionVisibility); handler.postDelayed(suggestionVisibility, 500); return
+        }
+        // Suggestions replace the toolbar in the same fixed-height slot. Never
+        // resize the IME for each word while fingers are already targeting keys.
+        row.visibility = visibility
+        toolbarRow?.visibility = if (visibility == GONE) VISIBLE else GONE
     }
     private fun alphabet() {
         if (settings.numberRow) row("1234567890".map { Key(it.toString()) }, compact = true)
@@ -150,7 +208,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         row("asdfghjkl".map { Key(it.toString(), alternates = accents(it)) }, inset = 12)
         row(listOf(Key("⇧", command = "shift", weight = 1.35f)) + "zxcvbnm".map { Key(it.toString(), alternates = accents(it)) } + Key("⌫", command = "delete", weight = 1.35f))
         val contextKey = when (profile.kind) { EditorKind.EMAIL -> "@"; EditorKind.URL -> "/"; else -> "," }
-        row(listOf(Key("?123", command = "symbols", weight = 1.3f), Key("☺", command = "emoji"),
+        row(listOf(Key("?123", command = "symbols", weight = 1.3f), panelKey(),
             Key(contextKey, alternates = listOf(";", ":")), Key(if (settings.language == "ro") "Română" else "English", " ", weight = 3.2f),
             Key(".", alternates = listOf("?", "!", "…")), Key(profile.actionLabel, command = "enter", weight = 1.45f)))
     }
@@ -171,15 +229,15 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         })
         row(rows[0].map(::symbol)); row(rows[1].map(::symbol), inset = 10)
         row(listOf(Key(if (page == 1) "=\\<" else "123", command = "more", weight = 1.4f)) + rows[2].map(::symbol) + Key("⌫", command = "delete", weight = 1.4f))
-        row(listOf(Key("ABC", command = "alphabet", weight = 1.3f), Key("☺", command = "emoji"), Key(","), Key("space", " ", weight = 3.2f), Key("."), Key(profile.actionLabel, command = "enter", weight = 1.45f)))
+        row(listOf(Key("ABC", command = "alphabet", weight = 1.3f), panelKey(), Key(","), Key("space", " ", weight = 3.2f), Key("."), Key(profile.actionLabel, command = "enter", weight = 1.45f)))
     }
     private fun numberPad() {
         val phone = profile.kind == EditorKind.PHONE
         row(listOf(Key("1"), Key("2"), Key("3"), Key("⌫", command = "delete")))
         row(listOf(Key("4"), Key("5"), Key("6"), Key(if (phone) "+" else if (profile.signed) "−" else ",", if (phone) "+" else if (profile.signed) "-" else ",")))
         row(listOf(Key("7"), Key("8"), Key("9"), Key(if (phone) "#" else "/")))
-        row(listOf(Key("🌐", command = "switch"), Key("0", alternates = if (phone) listOf("+") else emptyList()),
-            Key(if (phone) "*" else if (settings.language == "ro") "," else ".", alternates = if (!phone) listOf(".", ",") else emptyList()), Key(profile.actionLabel, command = "enter")))
+        row(listOf(if (settings.showToolbar) Key("🌐", command = "switch") else Key("⋯", command = "tools"), Key("0", alternates = if (phone) listOf("+") else emptyList()),
+            Key(if (phone) "*" else ".", alternates = if (!phone) listOf(",") else emptyList()), Key(profile.actionLabel, command = "enter")))
     }
     private fun emojiPanel() {
         val categories = listOf("Recent") + EmojiCatalog.categories.keys
@@ -188,20 +246,24 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             tabs.addView(TextView(context).apply {
                 text = category; textSize = 13f; setTextColor(if (category == emojiCategory) accent else ink)
                 setPadding(dp(12), dp(10), dp(12), dp(10)); contentDescription = "$category emoji"
-                setOnClickListener { emojiCategory = category; render() }
+                isSelected = category == emojiCategory
+                background = if (isSelected) backgroundFor(modifier) else null
+                setOnClickListener { emojiCategory = category; listener.onEmojiCategory(category); render() }
             }, LayoutParams(-2, dp(42)))
         }
-        addView(HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; addView(tabs) })
+        val tabScroller = HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; addView(tabs) }
+        addView(tabScroller)
+        tabs.getChildAt(categories.indexOf(emojiCategory))?.let { selected -> tabScroller.post { tabScroller.smoothScrollTo(selected.left, 0) } }
         val emojis = if (emojiCategory == "Recent") recent else EmojiCatalog.categories[emojiCategory].orEmpty()
         val content = LinearLayout(context).apply { orientation = VERTICAL }
-        if (emojis.isEmpty()) content.addView(TextView(context).apply { text = "Your recently used emoji appear here."; setTextColor(ink); gravity = Gravity.CENTER; setPadding(dp(16), dp(32), dp(16), dp(32)) })
+        if (emojis.isEmpty()) content.addView(panelMessage("Your recently used emoji appear here.\nChoose a category above to get started."))
         val columns = if (landscape) 12 else 8
         emojis.chunked(columns).forEach { group ->
             val line = LinearLayout(context)
             group.forEach { emoji ->
                 line.addView(TextView(context).apply {
                     text = emoji; textSize = 27f; gravity = Gravity.CENTER; contentDescription = EmojiCatalog.description(emoji)
-                    setOnClickListener { feedback(this); listener.onEmoji(emoji); recent = (listOf(emoji) + recent).distinct().take(24) }
+                    setOnClickListener { feedback(this); listener.onEmoji(emoji); if (profile.assistedTyping) recent = (listOf(emoji) + recent).distinct().take(24) }
                     val variants = EmojiCatalog.variants(emoji)
                     if (variants.isNotEmpty()) setOnLongClickListener { showAlternates(this, variants, true); true }
                 }, LayoutParams(0, dp(48), 1f))
@@ -210,14 +272,77 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             content.addView(line)
         }
         addView(ScrollView(context).apply { addView(content); isFillViewport = true }, LayoutParams(-1, dp(if (landscape) 120 else 212)))
-        row(listOf(Key("ABC", command = "alphabet", weight = 1.4f), Key("🌐", command = "switch"), Key("space", " ", weight = 3f), Key("⌫", command = "delete"), Key(profile.actionLabel, command = "enter", weight = 1.4f)))
+        panelFooter()
+    }
+    private fun panelKey() = if (settings.showToolbar) Key("☺", command = "emoji") else Key("⋯", command = "tools")
+    private fun panelMessage(message: String) = TextView(context).apply {
+        text = message; textSize = 14f; setTextColor(ink); gravity = Gravity.CENTER
+        setPadding(dp(16), dp(16), dp(16), dp(16))
+    }
+    private fun panelFooter() = row(listOf(Key("ABC", command = "alphabet", weight = 1.4f), Key("⋯", command = "tools"),
+        Key("space", " ", weight = 3f), Key("⌫", command = "delete"), Key(profile.actionLabel, command = "enter", weight = 1.4f)))
+    fun showClipboard(entries: List<ClipboardEntry>, enabled: Boolean) {
+        if (profile.sensitive) return
+        clips = entries; historyEnabled = enabled; page = 4; render()
+    }
+    fun refreshClipboard(entries: List<ClipboardEntry>, enabled: Boolean) {
+        clips = if (profile.sensitive) emptyList() else entries; historyEnabled = enabled
+        if (page == 4) render()
+    }
+    fun clearTransientPanels() {
+        clips = emptyList()
+        if (page in 4..5) { page = 0; render() }
+    }
+    private fun clipboardPanel() {
+        val content = LinearLayout(context).apply { orientation = VERTICAL }
+        content.addView(panelMessage(if (historyEnabled) "Clipboard · unpinned clips expire after 1 hour" else "Clipboard · history is off\nOnly the current copied text is shown."))
+        val actions = LinearLayout(context)
+        actions.addView(panelButton(if (historyEnabled) "Turn history off" else "Turn history on") { listener.onCommand("clipboardHistory") }, LayoutParams(0, dp(44), 1f))
+        if (historyEnabled && clips.isNotEmpty()) actions.addView(panelButton("Clear all") { listener.onClipboardAction("clear", "") }, LayoutParams(0, dp(44), 1f))
+        content.addView(actions)
+        if (clips.isEmpty()) content.addView(panelMessage("No copied text yet. Copy text in an app, then open Clipboard.\nPrivate or sensitive clips are never shown."))
+        clips.forEach { clip ->
+            val card = LinearLayout(context).apply { orientation = VERTICAL; background = backgroundFor(keyColor) }
+            card.addView(TextView(context).apply {
+                text = clip.text; setTextColor(ink); textSize = 16f; maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
+                setPadding(dp(12), dp(12), dp(12), dp(12)); minHeight = dp(48)
+                contentDescription = "Paste clip: ${clip.text}"; isClickable = true
+                setOnClickListener { feedback(this); listener.onClipboardPaste(clip.text) }
+            }, LayoutParams(-1, -2))
+            if (historyEnabled) {
+                val controls = LinearLayout(context)
+                controls.addView(panelButton(if (clip.pinned) "Unpin" else "Pin") { listener.onClipboardAction("pin", clip.text) }, LayoutParams(0, dp(44), 1f))
+                controls.addView(panelButton("Delete clip") { listener.onClipboardAction("delete", clip.text) }, LayoutParams(0, dp(44), 1f))
+                card.addView(controls)
+            }
+            content.addView(card, LayoutParams(-1, -2).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+        }
+        addView(ScrollView(context).apply { addView(content) }, LayoutParams(-1, dp(if (landscape) 120 else 212)))
+        panelFooter()
+    }
+    private fun panelButton(label: String, action: () -> Unit) = TextView(context).apply {
+        text = label; setTextColor(accent); textSize = 14f; gravity = Gravity.CENTER
+        contentDescription = label; background = backgroundFor(modifier); isClickable = true; isFocusable = true
+        setOnClickListener { feedback(this); action() }
+    }
+    private fun toolsPanel() {
+        addView(panelMessage("Keyboard tools"))
+        row(listOf(Key("Emoji", command = "emoji"), Key("Clipboard", command = "clipboard"), Key("Settings", command = "settings")))
+        row(listOf(Key("Select all", command = "selectAll"), Key("Copy", command = "copy"), Key("Cut", command = "cut")))
+        row(listOf(Key("‹", command = "left"), Key("›", command = "right"), Key("Language", command = "switch"), Key(if (settings.showToolbar) "Hide toolbar" else "Show toolbar", command = "toolbar")))
+        panelFooter()
     }
     private fun row(keys: List<Key>, inset: Int = 0, compact: Boolean = false) {
         val line = LinearLayout(context).apply { setPadding(dp(inset), 0, dp(inset), 0); gravity = Gravity.CENTER; isBaselineAligned = false }
         val height = if (compact) if (landscape) 34 else 40 else if (landscape) 40 else settings.keyHeight
-        keys.forEach { line.addView(makeKey(it), LayoutParams(0, dp(height), it.weight).apply {
-            setMargins(dp(settings.keySpacing), dp(3), dp(settings.keySpacing), dp(3))
-        }) }
+        keys.forEach { key ->
+            val view = makeKey(key)
+            val target = KeyTouchTarget(context, view)
+            target.addView(view, FrameLayout.LayoutParams(-1, -1).apply {
+                setMargins(dp(settings.keySpacing), dp(3), dp(settings.keySpacing), dp(3))
+            })
+            line.addView(target, LayoutParams(0, dp(height) + dp(3) * 2, key.weight))
+        }
         addView(line, LayoutParams(-1, -2))
     }
     private fun backgroundFor(color: Int, keycap: Boolean = true): RippleDrawable {
@@ -257,7 +382,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         val secondary = key.alternates.firstOrNull()?.takeIf {
             settings.secondarySymbols && !toolbar && key.value.length == 1
         }
-        val view: TextView = KeyLabelView(context, secondary)
+        val view: TextView = KeyLabelView(context, secondary).apply { clipboardIcon = toolbar && command == "clipboard" }
         view.apply {
             text = key.label; gravity = Gravity.CENTER
             textSize = if (toolbar) 23f else if (key.label.length > 2) 13f else 22f
@@ -270,9 +395,16 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
                 "shift" -> "Shift, double tap for caps lock"; "switch" -> "Switch English and Romanian, hold to choose another keyboard"
                 "hide" -> "Hide keyboard"; "left" -> "Move cursor left, hold to select"; "right" -> "Move cursor right, hold to select"
                 "selectAll" -> "Select all"; "settings" -> "Open keyboard settings"; "symbols" -> "Numbers and symbols"
+                "tools" -> "Keyboard tools"; "clipboard" -> "Clipboard"; "copy" -> "Copy selection"; "cut" -> "Cut selection"
+                "toolbar" -> if (settings.showToolbar) "Hide toolbar" else "Show toolbar"
                 "more" -> "More symbols"; "alphabet" -> "Letters"; "emoji" -> "Emoji"
                 else -> if (key.value == " ") "Space, hold to switch language" else key.label + if (key.alternates.isNotEmpty()) ", hold for alternatives" else ""
             }
+        }
+        if (profile.sensitive && command in listOf("clipboard", "copy", "cut")) {
+            view.isEnabled = false; view.alpha = .4f
+            view.contentDescription = "${key.label} unavailable in private fields"
+            return view
         }
         if (command == "shift") shiftKey = view
         if (command == null && key.value.length == 1 && key.value[0].isLetter()) letters.add(view to key.value)
@@ -281,65 +413,28 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             when (command) {
                 "symbols" -> { page = 1; render() }; "more" -> { page = if (page == 1) 2 else 1; render() }
                 "alphabet" -> { page = 0; render() }; "emoji" -> { page = 3; render() }
+                "tools" -> { page = 5; render() }
                 null -> listener.onText(key.value); else -> listener.onCommand(command)
             }
         }
-        if (command == "delete") {
-            val repeat = object : Runnable { override fun run() { listener.onCommand("delete"); handler.postDelayed(this, 55) } }
-            var repeated = false
-            val start = Runnable { repeated = true; feedback(view); repeat.run() }
-            view.setOnTouchListener { _, event -> when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { repeated = false; view.isPressed = true; handler.postDelayed(start, settings.longPressDelay.toLong()); true }
-                MotionEvent.ACTION_UP -> { handler.removeCallbacks(start); handler.removeCallbacks(repeat); view.isPressed = false; if (!repeated) view.performClick(); true }
-                MotionEvent.ACTION_CANCEL -> { handler.removeCallbacks(start); handler.removeCallbacks(repeat); view.isPressed = false; true }
-                MotionEvent.ACTION_MOVE -> { if (event.x !in 0f..view.width.toFloat() || event.y !in 0f..view.height.toFloat()) { handler.removeCallbacks(start); handler.removeCallbacks(repeat); view.isPressed = false; repeated = true }; true }
-                else -> false
-            } }
-        } else if (key.alternates.isNotEmpty() || command in listOf("shift", "left", "right", "switch") || key.value == " ") {
+        if (key.alternates.isNotEmpty() || command in listOf("shift", "left", "right", "switch", "emoji") || key.value == " ") {
             view.setOnLongClickListener {
                 feedback(view)
                 when { key.alternates.isNotEmpty() -> showAlternates(view, key.alternates)
+                    command == "emoji" -> { page = 5; render() }
                     key.value == " " -> listener.onCommand("switch")
                     else -> listener.onCommand(command!!, true) }
                 true
             }
-            // Keep accessibility long-click actions, while physical touch follows
-            // Aster's configurable delay instead of Android's fixed view timeout.
-            var pressed = false
-            var longPerformed = false
-            val trigger = Runnable {
-                if (pressed && view.isAttachedToWindow) {
-                    longPerformed = view.performLongClick()
-                    if (longPerformed) view.isPressed = false
-                }
-            }
-            view.setOnTouchListener { _, event ->
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        pressed = true; longPerformed = false; view.isPressed = true
-                        view.drawableHotspotChanged(event.x, event.y)
-                        handler.postDelayed(trigger, settings.longPressDelay.toLong()); true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        if (event.x !in 0f..view.width.toFloat() || event.y !in 0f..view.height.toFloat()) {
-                            pressed = false; view.isPressed = false; handler.removeCallbacks(trigger)
-                        }
-                        true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        handler.removeCallbacks(trigger)
-                        val tap = pressed && !longPerformed
-                        pressed = false; view.isPressed = false
-                        if (tap) view.performClick()
-                        true
-                    }
-                    MotionEvent.ACTION_CANCEL -> {
-                        pressed = false; view.isPressed = false; handler.removeCallbacks(trigger); true
-                    }
-                    else -> false
-                }
-            }
         }
+        if (key.value == " ") {
+            if (Build.VERSION.SDK_INT >= 26) view.tooltipText = "Swipe Space to move the cursor; hold to switch language"
+        }
+        view.setOnTouchListener(KeyTouchHandler(view, handler, touches, settings.longPressDelay.toLong(),
+            rollAllowed = command == null || command in listOf("shift", "delete"),
+            repeatDelete = if (command == "delete") ({ listener.onCommand("delete") }) else null,
+            cursorMove = if (key.value == " ") ({ steps -> listener.onCursorMove(steps) }) else null,
+            holdFeedback = { feedback(view) }))
         return view
     }
 }

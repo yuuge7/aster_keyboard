@@ -58,20 +58,29 @@ class WordLexicon(entries: List<Pair<String, Int>>, private val language: String
         val candidates = mutableSetOf<String>()
         folded[fold(word)]?.let { candidates.add(it) }
         for (index in word.indices) {
+            if (Thread.currentThread().isInterrupted) return emptySet()
             candidates.add(word.removeRange(index, index + 1))
             if (index + 1 < word.length) candidates.add(word.substring(0, index) + word[index + 1] + word[index] + word.substring(index + 2))
             alphabet.forEach { candidates.add(word.substring(0, index) + it + word.substring(index + 1)) }
         }
-        for (index in 0..word.length) alphabet.forEach { candidates.add(word.substring(0, index) + it + word.substring(index)) }
+        for (index in 0..word.length) {
+            if (Thread.currentThread().isInterrupted) return emptySet()
+            alphabet.forEach { candidates.add(word.substring(0, index) + it + word.substring(index)) }
+        }
         return candidates
+    }
+    /** A bounded map lookup for the delimiter path; edit searches stay on the worker. */
+    fun immediateCorrection(input: String, restoreDiacritics: Boolean = true): String? {
+        if (input.length !in 2..32 || input.any { !it.isLetter() && it !in "'’" }) return null
+        if (input.drop(1).any { it.isUpperCase() } && input != input.uppercase(Locale.ROOT)) return null
+        val common = if (language == "en") englishCorrections else if (restoreDiacritics) romanianCorrections else emptyMap()
+        return common[normalize(input)]?.takeIf { it in words }?.let { matchCase(input, it) }
     }
     fun correction(input: String, restoreDiacritics: Boolean = true, protected: Set<String> = emptySet()): String? {
         val word = normalize(input)
         if (word.length !in 2..32 || input.any { !it.isLetter() && it !in "'’" } || protected.any { normalize(it) == word }) return null
         if (input.drop(1).any { it.isUpperCase() } && input != input.uppercase(Locale.ROOT)) return null
-        val common = if (language == "en") mapOf("teh" to "the", "adn" to "and", "recieve" to "receive", "dont" to "don't", "doesnt" to "doesn't", "cant" to "can't", "wont" to "won't")
-            else if (restoreDiacritics) mapOf("multumesc" to "mulțumesc", "buna" to "bună", "maine" to "mâine", "romana" to "română", "intradevar" to "într-adevăr") else emptyMap()
-        common[word]?.takeIf { it in words }?.let { return matchCase(input, it) }
+        immediateCorrection(input, restoreDiacritics)?.let { return it }
         if (word in words || word.length < 3) return null
         val choices = suggestions(word).map(::normalize).filter {
             !it.startsWith(word) && (restoreDiacritics || fold(it) != fold(word))
@@ -85,6 +94,8 @@ class WordLexicon(entries: List<Pair<String, Int>>, private val language: String
     private fun score(candidate: String, input: String) = ln((words[candidate] ?: 1).toDouble()) +
         (if (fold(candidate) == fold(input)) 3.0 else 0.0)
     companion object {
+        private val englishCorrections = mapOf("teh" to "the", "adn" to "and", "recieve" to "receive", "dont" to "don't", "doesnt" to "doesn't", "cant" to "can't", "wont" to "won't")
+        private val romanianCorrections = mapOf("multumesc" to "mulțumesc", "buna" to "bună", "maine" to "mâine", "romana" to "română", "intradevar" to "într-adevăr")
         fun normalize(word: String): String = Normalizer.normalize(word.replace('ş', 'ș').replace('ţ', 'ț').replace('Ş', 'Ș').replace('Ţ', 'Ț').replace('’', '\''), Normalizer.Form.NFC).lowercase(Locale.ROOT)
         fun fold(word: String): String = buildString {
             Normalizer.normalize(word, Normalizer.Form.NFD).forEach { char ->

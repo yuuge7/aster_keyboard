@@ -357,4 +357,31 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'Toolbar and clipboard preferences save through the native bridge',
+    (tester) async {
+      await tester.pumpWidget(const AsterApp());
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+      final scrollable = find
+          .descendant(
+            of: find.byKey(const PageStorageKey('keyboardSettings')),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      for (final key in ['showToolbar', 'clipboardHistoryEnabled']) {
+        final target = find.byKey(ValueKey('setting-$key'));
+        await tester.scrollUntilVisible(target, 300, scrollable: scrollable);
+        await Scrollable.ensureVisible(tester.element(target), alignment: .4);
+        await tester.pumpAndSettle();
+        await tester.tap(target);
+        await tester.pumpAndSettle();
+      }
+      expect(preferences['showToolbar'], false);
+      expect(preferences['clipboardHistoryEnabled'], true);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

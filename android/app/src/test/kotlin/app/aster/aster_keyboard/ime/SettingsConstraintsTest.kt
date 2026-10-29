@@ -38,5 +38,7 @@ class SettingsConstraintsTest {
         assertEquals(false, values["keyBorders"])
         assertEquals(true, values["secondarySymbols"])
         assertEquals(400, values["longPressDelay"])
+        assertEquals(true, values["showToolbar"])
+        assertEquals(false, values["clipboardHistoryEnabled"])
     }
 }

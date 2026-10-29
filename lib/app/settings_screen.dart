@@ -236,6 +236,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       section('Keys and feedback'),
       toggle(
+        'showToolbar',
+        'Show keyboard toolbar',
+        'Language, cursor, clipboard, and settings shortcuts. When hidden, tap ⋯ on the bottom row for tools.',
+      ),
+      toggle(
         'numberRow',
         'Always show number row',
         'Keep 1–0 above the letters.',
@@ -284,6 +289,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       const SizedBox(height: 10),
       const Text(
         'Suggestions, autocorrect, and automatic spacing stay off in sensitive fields, email addresses, URLs, and number pads.',
+        style: TextStyle(height: 1.5),
+      ),
+      section('Clipboard'),
+      toggle(
+        'clipboardHistoryEnabled',
+        'Clipboard history',
+        'Save up to 20 copied text clips locally while Aster is open in ordinary fields. Unpinned clips expire after 1 hour. Turning this off clears all saved clips.',
+      ),
+      const Text(
+        'Tap the clipboard button to paste, pin, delete, or clear clips. Password/private fields and clips marked sensitive are excluded. With history off, the clipboard is read only when you open its panel.',
         style: TextStyle(height: 1.5),
       ),
       const SizedBox(height: 24),
@@ -413,17 +428,18 @@ class KeyboardPreview extends StatelessWidget {
                 padding: const EdgeInsets.all(8),
                 child: Column(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                          'aster',
-                          settings.language == 'ro' ? 'Bună' : 'Hello',
-                          '⚙',
-                        ].map((text) => legend(text)).toList(),
+                    if (settings.enabled('showToolbar'))
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 5),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            'aster',
+                            settings.language == 'ro' ? 'Bună' : 'Hello',
+                            '⚙',
+                          ].map((text) => legend(text)).toList(),
+                        ),
                       ),
-                    ),
                     if (settings.enabled('numberRow'))
                       row('1234567890'.split('')),
                     row('qwertyuiop'.split('')),

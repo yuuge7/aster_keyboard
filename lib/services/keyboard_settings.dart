@@ -21,6 +21,8 @@ class KeyboardSettings {
     'keyBorders': false,
     'secondarySymbols': true,
     'longPressDelay': 400,
+    'showToolbar': true,
+    'clipboardHistoryEnabled': false,
     'wallpaperDim': .35,
     'personalWordsEn': '',
     'personalWordsRo': '',
