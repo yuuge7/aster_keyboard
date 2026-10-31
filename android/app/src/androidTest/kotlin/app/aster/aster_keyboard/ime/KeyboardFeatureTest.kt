@@ -185,7 +185,7 @@ class KeyboardFeatureTest {
             field.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             activity.getSystemService(InputMethodManager::class.java).restartInput(field)
         }
-        await { node("▣ unavailable in private fields") != null }
+        await { node("Clipboard unavailable in private fields") != null }
         rapidType("privatepasswordletters")
         await { text() == "privatepasswordletters" }
         assertNull(node("Insert suggestion private"))
@@ -243,6 +243,34 @@ class KeyboardFeatureTest {
         type("teh"); await { node("Insert suggestion the") != null }
         click("Space, hold to switch language"); await { text() == "the " }
         click("Delete, hold to repeat"); await { text() == "teh" }
+        // Let the dictionary finish before the boundary to catch a repeated correction.
+        await { node("Insert suggestion the") != null }
+        click("Space, hold to switch language"); await { text() == "teh " }
+        type("teh"); await { node("Insert suggestion the") != null }
+        click("Space, hold to switch language"); await { text() == "teh the " }
+    }
+    @Test fun keyboardPickerStaysAvailableWithSuggestionsAndHiddenToolbar() {
+        val picker = "Change keyboard or voice input"
+        val target = bounds(picker)
+        assertTrue(target.width() >= 48 * context.resources.displayMetrics.density - 1)
+        assertTrue(target.height() >= 48 * context.resources.displayMetrics.density - 1)
+        type("hello"); await { node("Insert suggestion hello") != null }
+        assertNotNull(node(picker))
+        click(picker)
+        fun containsAster(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            if (node.packageName?.toString() != context.packageName &&
+                node.text?.toString()?.contains("Aster Keyboard") == true) return true
+            return (0 until node.childCount).any { containsAster(node.getChild(it)) }
+        }
+        try {
+            await("The system keyboard chooser must open") { automation.windows.any { containsAster(it.root) } }
+        } finally { shell("input keyevent 4") }
+        await { node("Keyboard tools") != null }
+        assertEquals("hello", text())
+        click("Keyboard tools"); click("Hide toolbar")
+        await { !store.read().showToolbar }
+        click("Keyboard tools"); assertNotNull(node(picker))
     }
     @Test fun romanianDiacriticsAndLanguageSwitchUseRealKeys() {
         click("Switch English and Romanian, hold to choose another keyboard")
@@ -421,7 +449,7 @@ class KeyboardFeatureTest {
             field.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             activity.getSystemService(InputMethodManager::class.java).restartInput(field)
         }
-        await { node("▣ unavailable in private fields") != null }
+        await { node("Clipboard unavailable in private fields") != null }
         copyClip("private test clip")
         assertNull(node("Clipboard"))
         assertFalse(app.aster.aster_keyboard.settings.ClipboardStore(context).entries().any { it.text == "private test clip" })

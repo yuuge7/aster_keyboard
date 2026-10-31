@@ -26,6 +26,50 @@ class TypingSessionTest {
         type(session, "hello, world")
         assertEquals("hello, world", editor.text)
     }
+    @Test fun spaceAfterUndoKeepsOriginalAndDoesNotCreateAnotherUndo() {
+        val editor = Editor(); val session = TypingSession(editor)
+        type(session, "teh ", correction = { "the" })
+        assertTrue(session.backspace())
+        type(session, " ", correction = { fail("An undone correction must not be retried"); null })
+        assertEquals("teh ", editor.text)
+        assertEquals("", session.word)
+        assertFalse(session.backspace())
+    }
+    @Test fun punctuationAndEnterAfterUndoKeepOriginalSpelling() {
+        val editor = Editor(); val session = TypingSession(editor)
+        type(session, "teh,", correction = { "the" }); assertTrue(session.backspace())
+        type(session, "!", correction = { "the" })
+        assertEquals("teh! ", editor.text)
+
+        type(session, "teh ", correction = { "the" }); assertTrue(session.backspace())
+        assertNull(session.finishWord { "the" })
+        assertEquals("teh! teh", editor.text)
+    }
+    @Test fun undoOnlyProtectsCurrentOccurrence() {
+        val editor = Editor(); val session = TypingSession(editor)
+        type(session, "teh ", correction = { if (it == "teh") "the" else null })
+        assertTrue(session.backspace())
+        type(session, " teh ", correction = { if (it == "teh") "the" else null })
+        assertEquals("teh the ", editor.text)
+    }
+    @Test fun editingAnUndoneWordAllowsCorrectionAgain() {
+        val editor = Editor(); val session = TypingSession(editor)
+        type(session, "teh ", correction = { "the" }); assertTrue(session.backspace())
+        type(session, "x ", correction = { if (it == "tehx") "text" else null })
+        assertEquals("text ", editor.text)
+        assertTrue(session.backspace()); assertEquals("tehx", editor.text)
+        assertTrue(session.backspace())
+        type(session, " ", correction = { if (it == "teh") "the" else null })
+        assertEquals("the ", editor.text)
+    }
+    @Test fun acceptingASuggestionAfterUndoStillReplacesTheWord() {
+        val editor = Editor(); val session = TypingSession(editor)
+        type(session, "teh ", correction = { "the" }); assertTrue(session.backspace())
+        session.accept("the")
+        assertEquals("the ", editor.text)
+        type(session, "teh ", correction = { "the" })
+        assertEquals("the the ", editor.text)
+    }
     @Test fun punctuationSpacingCanBeDisabled() {
         val editor = Editor(); type(TypingSession(editor), "hello,world!", punctuation = false)
         assertEquals("hello,world!", editor.text)

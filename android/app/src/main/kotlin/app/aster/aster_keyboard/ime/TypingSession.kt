@@ -15,22 +15,24 @@ class TypingSession(private val editor: TextEditor) {
     private var automaticSpace = false
     private var lastSpace = -1000L
     private var undo: Pair<String, String>? = null
+    private var correctionRejected = false
     fun reset(finish: Boolean = true) {
         if (finish && word.isNotEmpty()) editor.finish()
-        word = ""; automaticSpace = false; undo = null; lastSpace = -1000L
+        word = ""; automaticSpace = false; undo = null; lastSpace = -1000L; correctionRejected = false
     }
     fun finishWord(correction: (String) -> String?): String? {
-        val corrected = word.takeIf { it.isNotEmpty() }?.let(correction)
+        val corrected = word.takeIf { it.isNotEmpty() && !correctionRejected }?.let(correction)
         if (word.isNotEmpty()) {
             if (corrected != null && corrected != word) editor.commit(corrected) else editor.finish()
             word = ""
         }
+        correctionRejected = false
         return corrected
     }
     fun type(text: String, compose: Boolean, correction: (String) -> String?,
         punctuationSpace: Boolean, doubleSpacePeriod: Boolean, now: Long) {
         if (text.length == 1 && (text[0].isLetter() || text in listOf("'", "’") && word.isNotEmpty()) && compose) {
-            undo = null; automaticSpace = false
+            undo = null; automaticSpace = false; correctionRejected = false
             if (word.length >= 40) { editor.finish(); word = "" }
             word += text; editor.compose(word); return
         }
@@ -58,11 +60,12 @@ class TypingSession(private val editor: TextEditor) {
         if (corrected != null && corrected != original) undo = original to (corrected + delimiter)
     }
     fun accept(candidate: String) {
-        editor.commit(candidate); editor.commit(" "); word = ""; undo = null; automaticSpace = false
+        editor.commit(candidate); editor.commit(" "); word = ""; undo = null; automaticSpace = false; correctionRejected = false
     }
     /** Returns false when the Android adapter should perform ordinary deletion. */
     fun backspace(): Boolean {
         if (word.isNotEmpty()) {
+            correctionRejected = false
             word = word.dropLast(1); editor.compose(word)
             if (word.isEmpty()) editor.finish()
             return true
@@ -71,7 +74,8 @@ class TypingSession(private val editor: TextEditor) {
             undo = null
             if (editor.before(replacement.length) == replacement) {
                 editor.replaceBefore(replacement.length, ""); word = original; editor.compose(original)
-                automaticSpace = false; return true
+                // Undo rejects correction for this occurrence, until it is edited or finished.
+                correctionRejected = true; automaticSpace = false; lastSpace = -1000L; return true
             }
         }
         automaticSpace = false; lastSpace = -1000L

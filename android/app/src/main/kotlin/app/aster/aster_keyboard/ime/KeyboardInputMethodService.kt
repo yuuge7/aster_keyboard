@@ -213,6 +213,10 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
             }
             "toolbar" -> store.update(mapOf("showToolbar" to !settings.showToolbar))
             "hide" -> { session.reset(); requestHideSelf(0) }
+            "keyboardPicker" -> {
+                session.reset(); updateSuggestions()
+                getSystemService(InputMethodManager::class.java).showInputMethodPicker()
+            }
             "switch" -> if (longPress || settings.enabledLanguages.size == 1) {
                 session.reset(); getSystemService(InputMethodManager::class.java).showInputMethodPicker()
             } else {

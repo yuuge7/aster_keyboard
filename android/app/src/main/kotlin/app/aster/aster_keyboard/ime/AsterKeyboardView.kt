@@ -7,6 +7,7 @@ import android.content.res.Configuration
 import android.graphics.*
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.RippleDrawable
 import android.media.AudioManager
 import android.os.Handler
@@ -145,37 +146,49 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         suggestionButtons.clear(); suggestionWords = emptyList(); toolbarRow = null
         val topBar = if (settings.showToolbar) FrameLayout(context).also { strip ->
             toolbarRow = toolbar().also { strip.addView(it, FrameLayout.LayoutParams(-1, -1)) }
-            addView(strip, LayoutParams(-1, dp(42)))
+            addView(strip, LayoutParams(-1, dp(48)))
         } else null
         if (page == 3) { emojiPanel(); return }
         if (page == 4) { clipboardPanel(); return }
         if (page == 5) { toolsPanel(); return }
         if (profile.assistedTyping && settings.suggestions && profile.kind == EditorKind.TEXT) {
-            suggestions = LinearLayout(context).apply { gravity = Gravity.CENTER; isBaselineAligned = false; visibility = GONE }
+            suggestions = LinearLayout(context).apply {
+                gravity = Gravity.CENTER; isBaselineAligned = false; visibility = GONE
+                background = backgroundFor(surface, keycap = false)
+            }
             if (topBar != null) topBar.addView(suggestions, FrameLayout.LayoutParams(-1, -1))
             else addView(suggestions, LayoutParams(-1, dp(if (landscape) 32 else 40)))
+            if (topBar != null) suggestions!!.addView(makeKey(Key("Tools", command = "tools"), toolbar = true), LayoutParams(dp(48), -1))
             repeat(3) {
                 val button = TextView(context).apply {
-                    textSize = 15f; setTextColor(ink); gravity = Gravity.CENTER
+                    textSize = 15f; setTextColor(ink); gravity = Gravity.CENTER; isFocusable = true
                     maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-                    setPadding(dp(6), 0, dp(6), 0); background = backgroundFor(modifier); isClickable = true
+                    setPadding(dp(6), 0, dp(6), 0); background = toolbarBackground(); isClickable = true
                     setOnClickListener { if (text.isNotEmpty()) { feedback(this); listener.onSuggestion(text.toString()) } }
                 }
                 suggestionButtons.add(button)
                 suggestions!!.addView(button, LayoutParams(0, -1, 1f).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) })
             }
-            if (topBar != null) suggestions!!.addView(makeKey(Key("☷", command = "tools"), toolbar = true), LayoutParams(dp(38), -1))
+            if (topBar != null) suggestions!!.addView(makeKey(Key("Keyboards", command = "keyboardPicker"), toolbar = true), LayoutParams(dp(48), -1))
         }
         if (profile.kind in listOf(EditorKind.NUMBER, EditorKind.PHONE)) numberPad()
         else if (page == 0) alphabet() else symbols()
         updateShift(shiftMode)
     }
     private fun toolbar(): LinearLayout {
-        val row = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL; isBaselineAligned = false }
-        row.addView(makeKey(Key(if (profile.sensitive) "Private field" else if (settings.language == "ro") "Română ▾" else "English ▾", command = "switch"), toolbar = true).apply { textSize = 13f }, LayoutParams(0, dp(42), 1f))
-        listOf(Key("‹", command = "left"), Key("›", command = "right"), Key("☷", command = "tools"), Key("▣", command = "clipboard"),
-            Key("⚙", command = "settings"), Key("⌄", command = "hide")).forEach {
-            row.addView(makeKey(it, toolbar = true), LayoutParams(dp(38), dp(42)))
+        val row = LinearLayout(context).apply {
+            gravity = Gravity.CENTER_VERTICAL; isBaselineAligned = false
+            background = backgroundFor(surface, keycap = false)
+        }
+        row.addView(makeKey(Key("Tools", command = "tools"), toolbar = true), LayoutParams(dp(48), -1))
+        row.addView(makeKey(Key(if (profile.sensitive) "Private" else if (settings.language == "ro") "Română ▾" else "English ▾", command = "switch"), toolbar = true).apply {
+            textSize = 13f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(4), 0, dp(4), 0)
+        }, LayoutParams(0, -1, 1f))
+        listOf(Key("Clipboard", command = "clipboard"), Key("Settings", command = "settings"),
+            Key("Hide", command = "hide"), Key("Keyboards", command = "keyboardPicker")).forEach {
+            row.addView(makeKey(it, toolbar = true), LayoutParams(dp(48), -1))
         }
         return row
     }
@@ -327,7 +340,8 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     }
     private fun toolsPanel() {
         addView(panelMessage("Keyboard tools"))
-        row(listOf(Key("Emoji", command = "emoji"), Key("Clipboard", command = "clipboard"), Key("Settings", command = "settings")))
+        row(listOf(Key("Emoji", command = "emoji"), Key("Clipboard", command = "clipboard"),
+            Key("Keyboards", command = "keyboardPicker"), Key("Settings", command = "settings")))
         row(listOf(Key("Select all", command = "selectAll"), Key("Copy", command = "copy"), Key("Cut", command = "cut")))
         row(listOf(Key("‹", command = "left"), Key("›", command = "right"), Key("Language", command = "switch"), Key(if (settings.showToolbar) "Hide toolbar" else "Show toolbar", command = "toolbar")))
         panelFooter()
@@ -353,6 +367,13 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             if (keycap && settings.keyBorders) setStroke(dp(1), (ink and 0x00FFFFFF) or (100 shl 24))
         }
         return RippleDrawable(ColorStateList.valueOf(Color.argb(50, 100, 150, 230)), shape, null)
+    }
+    private fun toolbarBackground(highlighted: Boolean = false): RippleDrawable {
+        fun shape(color: Int) = InsetDrawable(GradientDrawable().apply {
+            setColor(color); cornerRadius = dp(12).toFloat()
+        }, dp(4))
+        return RippleDrawable(ColorStateList.valueOf(Color.argb(45, Color.red(accent), Color.green(accent), Color.blue(accent))),
+            shape(if (highlighted) modifier else Color.TRANSPARENT), shape(Color.WHITE))
     }
     private fun feedback(view: View) {
         if (settings.haptics) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -382,17 +403,21 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         val secondary = key.alternates.firstOrNull()?.takeIf {
             settings.secondarySymbols && !toolbar && key.value.length == 1
         }
-        val view: TextView = KeyLabelView(context, secondary).apply { clipboardIcon = toolbar && command == "clipboard" }
+        val view: TextView = KeyLabelView(context, secondary).apply {
+            toolbarIcon = command?.takeIf { toolbar && it in listOf("tools", "clipboard", "settings", "hide", "keyboardPicker") }
+        }
         view.apply {
             text = key.label; gravity = Gravity.CENTER
             textSize = if (toolbar) 23f else if (key.label.length > 2) 13f else 22f
-            setTextColor(if (command == "enter") if (dark) surface else Color.WHITE else ink)
+            setTextColor(when { command == "enter" -> if (dark) surface else Color.WHITE; toolbar && command in listOf("tools", "keyboardPicker") -> accent; else -> ink })
             typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            background = backgroundFor(when { command == "enter" -> accent; toolbar -> surface; command != null || key.value == " " -> modifier; else -> keyColor }, keycap = !toolbar)
+            background = if (toolbar) toolbarBackground(command == "keyboardPicker")
+                else backgroundFor(when { command == "enter" -> accent; command != null || key.value == " " -> modifier; else -> keyColor })
             isFocusable = true; isClickable = true
             contentDescription = when (command) {
                 "delete" -> "Delete, hold to repeat"; "enter" -> if (profile.actionLabel == "↵") "Enter" else profile.actionLabel
                 "shift" -> "Shift, double tap for caps lock"; "switch" -> "Switch English and Romanian, hold to choose another keyboard"
+                "keyboardPicker" -> "Change keyboard or voice input"
                 "hide" -> "Hide keyboard"; "left" -> "Move cursor left, hold to select"; "right" -> "Move cursor right, hold to select"
                 "selectAll" -> "Select all"; "settings" -> "Open keyboard settings"; "symbols" -> "Numbers and symbols"
                 "tools" -> "Keyboard tools"; "clipboard" -> "Clipboard"; "copy" -> "Copy selection"; "cut" -> "Cut selection"
@@ -401,6 +426,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
                 else -> if (key.value == " ") "Space, hold to switch language" else key.label + if (key.alternates.isNotEmpty()) ", hold for alternatives" else ""
             }
         }
+        if (toolbar && Build.VERSION.SDK_INT >= 26) view.tooltipText = view.contentDescription
         if (profile.sensitive && command in listOf("clipboard", "copy", "cut")) {
             view.isEnabled = false; view.alpha = .4f
             view.contentDescription = "${key.label} unavailable in private fields"
