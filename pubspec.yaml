@@ -20,6 +20,7 @@ flutter:
   assets:
     - assets/fonts/roboto_license.txt
     - assets/licenses/wordlists.txt
+    - assets/licenses/emoji.txt
   fonts:
     - family: Roboto
       fonts:

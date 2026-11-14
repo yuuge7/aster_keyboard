@@ -53,6 +53,14 @@ class MultilingualSuggestionsTest {
         assertTrue(suggestions.protectsEnglish("maine", "ro", restoreDiacritics = false))
         assertFalse(suggestions.protectsEnglish("cot", "en"))
     }
+    @Test fun coldRomanianDictionaryDoesNotLetRareEnglishFormsBlockCuratedAccents() {
+        val en = WordLexicon(listOf("buna" to 67, "maine" to 2143, "keyboard" to 10000), "en")
+        val suggestions = MultilingualSuggestions { if (it == "en") en else null }
+        assertFalse(suggestions.protectsEnglish("buna", "ro"))
+        assertFalse(suggestions.protectsEnglish("maine", "ro"))
+        assertTrue(suggestions.protectsEnglish("buna", "ro", restoreDiacritics = false))
+        assertTrue(suggestions.protectsEnglish("keyboard", "ro"))
+    }
     @Test fun missingDictionaryAndInvalidInputStayUsable() {
         val suggestions = MultilingualSuggestions { if (it == "en") WordLexicon(listOf("hello" to 100), "en") else null }
         assertTrue(suggestions.suggestions("hel", "ro").contains("hello"))

@@ -4,10 +4,15 @@ FrequencyWords by Hermit Dave, derived from OpenSubtitles 2018.
 https://github.com/hermitdave/FrequencyWords
 https://opus.nlpl.eu/OpenSubtitles2018.php
 Source revision: 525f9b560de45753a5ea01069454e72e9aa541c6
-Files: content/2018/en/en_50k.txt and content/2018/ro/ro_50k.txt
-The bundled source wordlists are unmodified and licensed CC BY-SA 4.0.
+Files: content/2018/en/en_full.txt and content/2018/ro/ro_full.txt
+Adaptation: the first 100,000 source entries of each full frequency list.
+The entries retain their source spelling, counts and order, under CC BY-SA 4.0.
 Runtime lookups normalize Unicode/legacy Romanian cedillas and filter nonword tokens.
 No text is uploaded and no dictionaries are downloaded by the app.
+
+en_supplement.txt is an Aster-authored addition of English contractions, which
+the source corpus tokenizes into separate fragments. Its fixed ranking weights
+are curated, not measured corpus counts. It is also provided under CC BY-SA 4.0.
 
 Attribution-ShareAlike 4.0 International
 

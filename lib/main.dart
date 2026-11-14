@@ -11,6 +11,8 @@ void main() {
     yield LicenseEntryWithLineBreaks(['Roboto'], text);
     final words = await rootBundle.loadString('assets/licenses/wordlists.txt');
     yield LicenseEntryWithLineBreaks(['FrequencyWords / OpenSubtitles'], words);
+    final emoji = await rootBundle.loadString('assets/licenses/emoji.txt');
+    yield LicenseEntryWithLineBreaks(['Unicode CLDR emoji'], emoji);
   });
   runApp(const AsterApp());
 }

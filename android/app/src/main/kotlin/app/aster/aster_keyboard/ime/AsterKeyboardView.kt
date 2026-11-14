@@ -31,6 +31,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         fun onSuggestion(word: String)
         fun onEmoji(emoji: String)
         fun onEmojiCategory(category: String) {}
+        fun onEmojiSearch(query: String) {}
         fun onClipboardPaste(text: String) {}
         fun onClipboardAction(action: String, text: String) {}
         fun onCursorMove(steps: Int) {}
@@ -54,6 +55,12 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     private val suggestionButtons = mutableListOf<TextView>()
     private var page = 0
     private var emojiCategory = "Recent"
+    private var emojiSearch: EmojiSearchSession? = null
+    private var searchLabel: TextView? = null
+    private var searchResults: LinearLayout? = null
+    private var searchScroller: HorizontalScrollView? = null
+    private var searchShift = ShiftMode.OFF
+    private val searchShiftState = ShiftState()
     private var recent = emptyList<String>()
     private var clips = emptyList<ClipboardEntry>()
     private var historyEnabled = false
@@ -90,6 +97,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         post { requestLayout() }
     }
     fun configure(editor: EditorProfile, shift: ShiftMode, preferences: KeyboardSettings, wallpaper: File?, recents: List<String>, lastEmojiCategory: String = "Recent") {
+        emojiSearch = null
         cancelPendingTouches(); profile = editor; shiftMode = shift; settings = preferences; recent = recents; page = 0
         clips = emptyList(); historyEnabled = preferences.clipboardHistoryEnabled
         emojiCategory = lastEmojiCategory.takeIf { it == "Recent" || it in EmojiCatalog.categories } ?: "Recent"
@@ -144,10 +152,17 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     private fun render() {
         cancelPendingTouches(); removeAllViews(); letters.clear(); shiftKey = null; suggestions = null; drawnShift = null
         suggestionButtons.clear(); suggestionWords = emptyList(); toolbarRow = null
-        val topBar = if (settings.showToolbar) FrameLayout(context).also { strip ->
+        searchLabel = null; searchResults = null; searchScroller = null
+        val topBar = if (settings.showToolbar && emojiSearch == null) FrameLayout(context).also { strip ->
             toolbarRow = toolbar().also { strip.addView(it, FrameLayout.LayoutParams(-1, -1)) }
             addView(strip, LayoutParams(-1, dp(48)))
         } else null
+        if (emojiSearch != null) {
+            emojiSearchPanel()
+            if (page == 0) alphabet() else symbols()
+            updateShift(shiftMode)
+            return
+        }
         if (page == 3) { emojiPanel(); return }
         if (page == 4) { clipboardPanel(); return }
         if (page == 5) { toolsPanel(); return }
@@ -216,14 +231,14 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         toolbarRow?.visibility = if (visibility == GONE) VISIBLE else GONE
     }
     private fun alphabet() {
-        if (settings.numberRow) row("1234567890".map { Key(it.toString()) }, compact = true)
+        if (settings.numberRow && emojiSearch == null) row("1234567890".map { Key(it.toString()) }, compact = true)
         row("qwertyuiop".mapIndexed { index, c -> Key(c.toString(), alternates = listOf(if (index == 9) "0" else "${index + 1}") + accents(c)) })
         row("asdfghjkl".map { Key(it.toString(), alternates = accents(it)) }, inset = 12)
         row(listOf(Key("⇧", command = "shift", weight = 1.35f)) + "zxcvbnm".map { Key(it.toString(), alternates = accents(it)) } + Key("⌫", command = "delete", weight = 1.35f))
-        val contextKey = when (profile.kind) { EditorKind.EMAIL -> "@"; EditorKind.URL -> "/"; else -> "," }
+        val contextKey = if (emojiSearch != null) "," else when (profile.kind) { EditorKind.EMAIL -> "@"; EditorKind.URL -> "/"; else -> "," }
         row(listOf(Key("?123", command = "symbols", weight = 1.3f), panelKey(),
             Key(contextKey, alternates = listOf(";", ":")), Key(if (settings.language == "ro") "Română" else "English", " ", weight = 3.2f),
-            Key(".", alternates = listOf("?", "!", "…")), Key(profile.actionLabel, command = "enter", weight = 1.45f)))
+            Key(".", alternates = listOf("?", "!", "…")), enterKey()))
     }
     private fun accents(char: Char): List<String> = when (char) {
         'a' -> listOf("ă", "â", "à", "á", "ä", "æ")
@@ -242,7 +257,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         })
         row(rows[0].map(::symbol)); row(rows[1].map(::symbol), inset = 10)
         row(listOf(Key(if (page == 1) "=\\<" else "123", command = "more", weight = 1.4f)) + rows[2].map(::symbol) + Key("⌫", command = "delete", weight = 1.4f))
-        row(listOf(Key("ABC", command = "alphabet", weight = 1.3f), panelKey(), Key(","), Key("space", " ", weight = 3.2f), Key("."), Key(profile.actionLabel, command = "enter", weight = 1.45f)))
+        row(listOf(Key("ABC", command = "alphabet", weight = 1.3f), panelKey(), Key(","), Key("space", " ", weight = 3.2f), Key("."), enterKey()))
     }
     private fun numberPad() {
         val phone = profile.kind == EditorKind.PHONE
@@ -253,6 +268,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             Key(if (phone) "*" else ".", alternates = if (!phone) listOf(",") else emptyList()), Key(profile.actionLabel, command = "enter")))
     }
     private fun emojiPanel() {
+        addView(panelButton("Search emoji") { openEmojiSearch() }, LayoutParams(-1, dp(44)))
         val categories = listOf("Recent") + EmojiCatalog.categories.keys
         val tabs = LinearLayout(context)
         categories.forEach { category ->
@@ -274,20 +290,95 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         emojis.chunked(columns).forEach { group ->
             val line = LinearLayout(context)
             group.forEach { emoji ->
-                line.addView(TextView(context).apply {
-                    text = emoji; textSize = 27f; gravity = Gravity.CENTER; contentDescription = EmojiCatalog.description(emoji)
-                    setOnClickListener { feedback(this); listener.onEmoji(emoji); if (profile.assistedTyping) recent = (listOf(emoji) + recent).distinct().take(24) }
-                    val variants = EmojiCatalog.variants(emoji)
-                    if (variants.isNotEmpty()) setOnLongClickListener { showAlternates(this, variants, true); true }
-                }, LayoutParams(0, dp(48), 1f))
+                line.addView(emojiButton(emoji), LayoutParams(0, dp(48), 1f))
             }
             repeat(columns - group.size) { line.addView(View(context), LayoutParams(0, dp(48), 1f)) }
             content.addView(line)
         }
-        addView(ScrollView(context).apply { addView(content); isFillViewport = true }, LayoutParams(-1, dp(if (landscape) 120 else 212)))
+        addView(ScrollView(context).apply { addView(content); isFillViewport = true }, LayoutParams(-1, dp(if (landscape) 76 else 168)))
         panelFooter()
     }
-    private fun panelKey() = if (settings.showToolbar) Key("☺", command = "emoji") else Key("⋯", command = "tools")
+    private fun emojiButton(emoji: String) = TextView(context).apply {
+        text = emoji; textSize = 27f; gravity = Gravity.CENTER; contentDescription = EmojiCatalog.description(emoji)
+        isClickable = true; isFocusable = true; background = toolbarBackground()
+        setOnClickListener { feedback(this); listener.onEmoji(emoji); if (profile.assistedTyping) recent = (listOf(emoji) + recent).distinct().take(24) }
+        val variants = EmojiCatalog.variants(emoji)
+        if (variants.isNotEmpty()) setOnLongClickListener { showAlternates(this, variants, true); true }
+    }
+    private fun openEmojiSearch() {
+        searchShiftState.reset()
+        searchShift = shiftMode; emojiSearch = EmojiSearchSession(); shiftMode = ShiftMode.OFF; page = 0; render()
+    }
+    private fun closeEmojiSearch() {
+        if (emojiSearch != null) shiftMode = searchShift
+        emojiSearch = null
+    }
+    private fun emojiSearchPanel() {
+        val header = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
+        header.addView(panelButton("Back") { closeEmojiSearch(); page = 3; render() }.apply {
+            contentDescription = "Back to emoji categories"
+        }, LayoutParams(dp(52), dp(44)))
+        searchLabel = TextView(context).apply {
+            textSize = 15f; setTextColor(ink); gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, dp(10), 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.START
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }.also { header.addView(it, LayoutParams(0, dp(44), 1f)) }
+        header.addView(panelButton("Clear") { emojiSearch?.clear(); refreshEmojiSearch() }.apply {
+            contentDescription = "Clear emoji search"
+        }, LayoutParams(dp(52), dp(44)))
+        addView(header)
+        searchResults = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL }
+        searchScroller = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = true; isFillViewport = true; addView(searchResults)
+        }.also { addView(it, LayoutParams(-1, dp(52))) }
+        refreshEmojiSearch()
+    }
+    private fun refreshEmojiSearch() {
+        val query = emojiSearch?.query ?: return
+        searchLabel?.apply {
+            text = query.ifEmpty { "Search emoji…" }; contentDescription = "Emoji search: $query"
+        }
+        searchResults?.removeAllViews(); searchScroller?.scrollTo(0, 0)
+        if (query.isBlank()) showEmojiSearchResults(query, (recent + EmojiCatalog.categories.getValue("Faces")).distinct().take(24))
+        else {
+            searchResults?.addView(panelMessage("Searching…"))
+            listener.onEmojiSearch(query)
+        }
+    }
+    fun showEmojiSearchResults(query: String, emojis: List<String>) {
+        if (emojiSearch?.query != query) return
+        val results = searchResults ?: return
+        results.removeAllViews()
+        if (emojis.isEmpty()) results.addView(panelMessage("No emoji found. Try another word.").apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+        })
+        else emojis.forEach { results.addView(emojiButton(it), LayoutParams(dp(48), dp(48))) }
+    }
+    private fun sendText(value: String) {
+        val search = emojiSearch
+        if (search == null) listener.onText(value)
+        else {
+            search.append(if (shiftMode == ShiftMode.OFF) value else value.uppercase(java.util.Locale.ROOT))
+            searchShiftState.consume(); updateShift(searchShiftState.mode)
+            refreshEmojiSearch()
+        }
+    }
+    private fun sendCommand(command: String, longPress: Boolean = false) {
+        val search = emojiSearch
+        if (search == null) { listener.onCommand(command, longPress); return }
+        when (command) {
+            "delete" -> { search.backspace(); refreshEmojiSearch() }
+            "shift" -> {
+                if (longPress) searchShiftState.lock() else searchShiftState.tap(SystemClock.uptimeMillis())
+                updateShift(searchShiftState.mode)
+            }
+            "enter" -> { closeEmojiSearch(); page = 3; render() }
+            "switch" -> Unit
+            else -> { closeEmojiSearch(); listener.onCommand(command, longPress) }
+        }
+    }
+    private fun enterKey() = Key(if (emojiSearch != null) "Done" else profile.actionLabel, command = "enter", weight = 1.45f)
+    private fun panelKey() = if (settings.showToolbar || emojiSearch != null) Key("☺", command = "emoji") else Key("⋯", command = "tools")
     private fun panelMessage(message: String) = TextView(context).apply {
         text = message; textSize = 14f; setTextColor(ink); gravity = Gravity.CENTER
         setPadding(dp(16), dp(16), dp(16), dp(16))
@@ -304,7 +395,9 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     }
     fun clearTransientPanels() {
         clips = emptyList()
-        if (page in 4..5) { page = 0; render() }
+        val searching = emojiSearch != null
+        closeEmojiSearch()
+        if (searching || page in 4..5) { page = 0; render() }
     }
     private fun clipboardPanel() {
         val content = LinearLayout(context).apply { orientation = VERTICAL }
@@ -386,7 +479,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             text = if (!emoji && shiftMode != ShiftMode.OFF) value.uppercase() else value
             gravity = Gravity.CENTER; textSize = if (emoji) 25f else 22f; setTextColor(ink)
             contentDescription = if (emoji) EmojiCatalog.description(value) else value
-            setOnClickListener { feedback(this); if (emoji) listener.onEmoji(value) else listener.onText(value); popup?.dismiss() }
+            setOnClickListener { feedback(this); if (emoji) listener.onEmoji(value) else sendText(value); popup?.dismiss() }
         }, LayoutParams(dp(44), dp(48))) }
         val scroller = HorizontalScrollView(context).apply { addView(line) }
         // The editor must keep input focus while alternatives are open. A focusable
@@ -415,7 +508,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
                 else backgroundFor(when { command == "enter" -> accent; command != null || key.value == " " -> modifier; else -> keyColor })
             isFocusable = true; isClickable = true
             contentDescription = when (command) {
-                "delete" -> "Delete, hold to repeat"; "enter" -> if (profile.actionLabel == "↵") "Enter" else profile.actionLabel
+                "delete" -> "Delete, hold to repeat"; "enter" -> if (emojiSearch != null) "Finish emoji search" else if (profile.actionLabel == "↵") "Enter" else profile.actionLabel
                 "shift" -> "Shift, double tap for caps lock"; "switch" -> "Switch English and Romanian, hold to choose another keyboard"
                 "keyboardPicker" -> "Change keyboard or voice input"
                 "hide" -> "Hide keyboard"; "left" -> "Move cursor left, hold to select"; "right" -> "Move cursor right, hold to select"
@@ -423,7 +516,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
                 "tools" -> "Keyboard tools"; "clipboard" -> "Clipboard"; "copy" -> "Copy selection"; "cut" -> "Cut selection"
                 "toolbar" -> if (settings.showToolbar) "Hide toolbar" else "Show toolbar"
                 "more" -> "More symbols"; "alphabet" -> "Letters"; "emoji" -> "Emoji"
-                else -> if (key.value == " ") "Space, hold to switch language" else key.label + if (key.alternates.isNotEmpty()) ", hold for alternatives" else ""
+                else -> if (key.value == " ") if (emojiSearch != null) "Space in emoji search" else "Space, hold to switch language" else key.label + if (key.alternates.isNotEmpty()) ", hold for alternatives" else ""
             }
         }
         if (toolbar && Build.VERSION.SDK_INT >= 26) view.tooltipText = view.contentDescription
@@ -438,28 +531,28 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             feedback(view)
             when (command) {
                 "symbols" -> { page = 1; render() }; "more" -> { page = if (page == 1) 2 else 1; render() }
-                "alphabet" -> { page = 0; render() }; "emoji" -> { page = 3; render() }
-                "tools" -> { page = 5; render() }
-                null -> listener.onText(key.value); else -> listener.onCommand(command)
+                "alphabet" -> { page = 0; render() }; "emoji" -> { closeEmojiSearch(); page = 3; render() }
+                "tools" -> { closeEmojiSearch(); page = 5; render() }
+                null -> sendText(key.value); else -> sendCommand(command)
             }
         }
         if (key.alternates.isNotEmpty() || command in listOf("shift", "left", "right", "switch", "emoji") || key.value == " ") {
             view.setOnLongClickListener {
                 feedback(view)
                 when { key.alternates.isNotEmpty() -> showAlternates(view, key.alternates)
-                    command == "emoji" -> { page = 5; render() }
-                    key.value == " " -> listener.onCommand("switch")
-                    else -> listener.onCommand(command!!, true) }
+                    command == "emoji" -> { closeEmojiSearch(); page = 5; render() }
+                    key.value == " " -> sendCommand("switch")
+                    else -> sendCommand(command!!, true) }
                 true
             }
         }
-        if (key.value == " ") {
+        if (key.value == " " && emojiSearch == null) {
             if (Build.VERSION.SDK_INT >= 26) view.tooltipText = "Swipe Space to move the cursor; hold to switch language"
         }
         view.setOnTouchListener(KeyTouchHandler(view, handler, touches, settings.longPressDelay.toLong(),
             rollAllowed = command == null || command in listOf("shift", "delete"),
-            repeatDelete = if (command == "delete") ({ listener.onCommand("delete") }) else null,
-            cursorMove = if (key.value == " ") ({ steps -> listener.onCursorMove(steps) }) else null,
+            repeatDelete = if (command == "delete") ({ sendCommand("delete") }) else null,
+            cursorMove = if (key.value == " " && emojiSearch == null) ({ steps -> listener.onCursorMove(steps) }) else null,
             holdFeedback = { feedback(view) }))
         return view
     }

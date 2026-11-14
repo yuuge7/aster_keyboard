@@ -31,22 +31,30 @@ class MultilingualSuggestions(private val dictionary: (String) -> WordLexicon?) 
     /** Known English words must survive Romanian autocorrect, including rarer terms. */
     fun protectsEnglish(input: String, language: String, restoreDiacritics: Boolean = true): Boolean =
         language == "ro" && dictionary("en")?.contains(input) == true &&
-            !(restoreDiacritics && dictionary("ro")?.hasDiacriticAlternative(input) == true)
+            !(restoreDiacritics && (dictionary("ro")?.hasDiacriticAlternative(input) == true ||
+                WordLexicon.commonDiacriticAlternative(input)))
 
     companion object {
         fun languages(active: String): List<String> = if (active == "ro") listOf("ro", "en") else listOf(active)
 
         /** Edit distance with adjacent transpositions counted as one typo. */
-        internal fun distance(first: String, second: String): Int {
+        internal fun distance(first: String, second: String, limit: Int = maxOf(first.length, second.length)): Int {
+            if (kotlin.math.abs(first.length - second.length) > limit) return limit + 1
             val costs = Array(first.length + 1) { IntArray(second.length + 1) }
             for (i in 0..first.length) costs[i][0] = i
             for (j in 0..second.length) costs[0][j] = j
-            for (i in 1..first.length) for (j in 1..second.length) {
-                costs[i][j] = minOf(costs[i - 1][j] + 1, costs[i][j - 1] + 1,
-                    costs[i - 1][j - 1] + if (first[i - 1] == second[j - 1]) 0 else 1)
-                if (i > 1 && j > 1 && first[i - 1] == second[j - 2] && first[i - 2] == second[j - 1]) {
-                    costs[i][j] = minOf(costs[i][j], costs[i - 2][j - 2] + 1)
+            for (i in 1..first.length) {
+                if (Thread.currentThread().isInterrupted) return limit + 1
+                var minimum = costs[i][0]
+                for (j in 1..second.length) {
+                    costs[i][j] = minOf(costs[i - 1][j] + 1, costs[i][j - 1] + 1,
+                        costs[i - 1][j - 1] + if (first[i - 1] == second[j - 1]) 0 else 1)
+                    if (i > 1 && j > 1 && first[i - 1] == second[j - 2] && first[i - 2] == second[j - 1]) {
+                        costs[i][j] = minOf(costs[i][j], costs[i - 2][j - 2] + 1)
+                    }
+                    minimum = minOf(minimum, costs[i][j])
                 }
+                if (minimum > limit) return limit + 1
             }
             return costs[first.length][second.length]
         }

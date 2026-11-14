@@ -42,8 +42,12 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
     private lateinit var dictionaries: DictionaryRepository
     private lateinit var multilingual: MultilingualSuggestions
     private val worker = ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
+    private val emojiWorker = ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
     private val main = Handler(Looper.getMainLooper())
     private var suggestionTask: Future<*>? = null
+    private var emojiSearchTask: Future<*>? = null
+    private var emojiIndex: EmojiSearchIndex? = null // Accessed only on the worker.
+    private var emojiGeneration = 0
     @Volatile private var generation = 0
     private var correctionResult: Pair<String, String?>? = null
     private var personalWords = emptyMap<String, Set<String>>()
@@ -130,10 +134,12 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
             (preferences.language != "ro" && preferences.enabledLanguages.filter { it != preferences.language }.any { dictionaries[it]?.isCommon(word) == true })
     private fun correction(word: String): String? {
         if (!profile.assistedTyping || !settings.autoCorrect) return null
-        correctionResult?.takeIf { it.first == word }?.let { return it.second }
         if (protectedFromCorrection(word, settings, protectedWords)) return null
         // Never run an edit-distance search or wait for the worker on a key event.
-        return dictionaries[settings.language]?.immediateCorrection(word, settings.restoreDiacritics)
+        val dictionary = dictionaries[settings.language]
+        val immediate = if (dictionary == null) WordLexicon.commonCorrection(settings.language, word, settings.restoreDiacritics)
+            else dictionary.immediateCorrection(word, settings.restoreDiacritics)
+        return immediate ?: correctionResult?.takeIf { it.first == word }?.second
     }
     override fun onText(text: String) {
         val value = if (shift.uppercase && text.length == 1 && text[0].isLetter()) text.uppercase() else text
@@ -158,6 +164,21 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         updateSuggestions()
     }
     override fun onEmojiCategory(category: String) { store.rememberEmojiCategory(category) }
+    override fun onEmojiSearch(query: String) {
+        val token = ++emojiGeneration
+        emojiSearchTask?.cancel(true)
+        emojiSearchTask = emojiWorker.submit {
+            val index = emojiIndex ?: runCatching {
+                assets.open("emoji/search.tsv").bufferedReader().useLines { EmojiSearchIndex(it) }
+            }.getOrElse {
+                android.util.Log.e("AsterEmoji", "Could not load bundled emoji search", it)
+                main.post { if (active && token == emojiGeneration) keyboard?.showEmojiSearchResults(query, emptyList()) }
+                return@submit
+            }.also { emojiIndex = it }
+            val results = index.search(query)
+            main.post { if (active && token == emojiGeneration) keyboard?.showEmojiSearchResults(query, results) }
+        }
+    }
     override fun onCursorMove(steps: Int) {
         if (!active || steps == 0) return
         session.reset()
@@ -264,17 +285,20 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         session.reset(); readSettings(); updateCapitalization(); configure()
     }
     override fun onFinishInputView(finishingInput: Boolean) {
+        emojiGeneration++; emojiSearchTask?.cancel(true)
         keyboard?.cancelPendingTouches(); keyboard?.clearTransientPanels(); session.reset(); active = false; generation++; suggestionTask?.cancel(true)
         keyboard?.showSuggestions(emptyList()); super.onFinishInputView(finishingInput)
     }
     override fun onFinishInput() {
+        emojiGeneration++; emojiSearchTask?.cancel(true)
         session.reset(); active = false; generation++; suggestionTask?.cancel(true); correctionResult = null; shift.reset(); super.onFinishInput()
     }
     override fun onDestroy() {
         clipboard.removePrimaryClipChangedListener(clipboardListener)
         lastClipboardText = null
         store.preferences.unregisterOnSharedPreferenceChangeListener(this)
-        keyboard?.cancelPendingTouches(); keyboard = null; generation++; worker.shutdownNow(); main.removeCallbacksAndMessages(null)
+        keyboard?.cancelPendingTouches(); keyboard = null; generation++; emojiGeneration++
+        worker.shutdownNow(); emojiWorker.shutdownNow(); main.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 }

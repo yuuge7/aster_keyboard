@@ -329,7 +329,7 @@ class KeyboardFeatureTest {
         type("keyboard"); click("Space, hold to switch language")
         await { text() == "keyboard " }
         type("buna"); click("Space, hold to switch language")
-        await { text() == "keyboard bună " }
+        await("Expected Romanian accent restoration after an English word; received '${text()}'") { text() == "keyboard bună " }
         type("maine"); click("Space, hold to switch language")
         await { text() == "keyboard bună mâine " }
     }
@@ -360,6 +360,14 @@ class KeyboardFeatureTest {
         type("world"); await { text() == "hello, world" }
         click("Emoji"); click("Faces emoji"); click(EmojiCatalog.description("😀"))
         await { text() == "hello, world😀" }
+    }
+    @Test fun expandedEnglishCorrectionsAndContractionsUseTheBundledSupplement() {
+        type("youre"); await { node("Insert suggestion you're") != null }
+        click("Space, hold to switch language"); await { text() == "you're " }
+        type("tommorow"); click("Space, hold to switch language")
+        await { text() == "you're tomorrow " }
+        click("Delete, hold to repeat"); await { text() == "you're tommorow" }
+        click("Space, hold to switch language"); await { text() == "you're tommorow " }
     }
     @Test fun romanianUnsignedAndSignedDecimalPadsAlwaysHaveADirectPoint() {
         store.update(mapOf("language" to "ro"))
@@ -406,6 +414,40 @@ class KeyboardFeatureTest {
         assertEquals("Nature", SettingsStore(context).emojiCategory())
         click("Recent emoji")
         await { node("Recent emoji")?.isSelected == true && node(EmojiCatalog.description("🐱")) != null }
+    }
+    @Test fun emojiSearchKeepsQueriesOutOfTheEditorAndSupportsClearDeleteAndInsert() {
+        type("hello")
+        click("Keyboard tools"); click("Emoji"); click("Search emoji")
+        type("hearr"); click("Delete, hold to repeat"); type("t")
+        await { node("Emoji search: heart") != null && node(EmojiCatalog.description("❤️")) != null }
+        assertEquals("hello", text())
+        val screenshot = automation.takeScreenshot()
+        java.io.File(context.getExternalFilesDir(null), "emoji-search.png").outputStream().use {
+            screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+        screenshot.recycle()
+        click(EmojiCatalog.description("❤️")); await { text() == "hello❤️" }
+        click("Clear emoji search"); type("cafea")
+        await { node(EmojiCatalog.description("☕")) != null }
+        assertEquals("hello❤️", text())
+        click("Clear emoji search"); type("zzzzunfindable")
+        await { node("Emoji search: zzzzunfindable") != null }
+        click("Finish emoji search")
+        assertNotNull(node("Search emoji")); assertEquals("hello❤️", text())
+        click("Letters"); type("x"); await { text() == "hello❤️x" }
+    }
+    @Test fun emojiSearchWorksWithHiddenToolbarAndResetsOnEditorChange() {
+        store.update(mapOf("showToolbar" to false))
+        instrumentation.waitForIdleSync()
+        click("Keyboard tools"); click("Emoji"); click("Search emoji"); type("romania")
+        await { node(EmojiCatalog.description("🇷🇴")) != null }
+        assertEquals("", text())
+        click("Back to emoji categories"); assertNotNull(node("Search emoji"))
+        click("Search emoji"); assertNotNull(node("Emoji search: "))
+        type("coffee")
+        instrumentation.runOnMainSync { activity.getSystemService(InputMethodManager::class.java).restartInput(field) }
+        await { node("Keyboard tools") != null && node("Emoji search: coffee") == null }
+        assertEquals("", text())
     }
     private fun copyClip(text: String, sensitive: Boolean = false) {
         instrumentation.runOnMainSync {
