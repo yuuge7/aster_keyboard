@@ -25,6 +25,10 @@ class KeyLabelView @JvmOverloads constructor(context: Context, private val secon
                 strokeWidth = 1.7f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
             }
             when (icon) {
+                "emojiSearch" -> {
+                    canvas.drawCircle(10.5f, 10.5f, 6.5f, hintPaint)
+                    canvas.drawLine(15.5f, 15.5f, 21f, 21f, hintPaint)
+                }
                 "tools" -> for (x in listOf(4f, 14f)) for (y in listOf(4f, 14f))
                     canvas.drawRoundRect(x, y, x + 6, y + 6, 1.5f, 1.5f, hintPaint)
                 "clipboard" -> {

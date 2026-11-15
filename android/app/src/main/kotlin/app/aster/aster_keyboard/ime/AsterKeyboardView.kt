@@ -268,7 +268,6 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             Key(if (phone) "*" else ".", alternates = if (!phone) listOf(",") else emptyList()), Key(profile.actionLabel, command = "enter")))
     }
     private fun emojiPanel() {
-        addView(panelButton("Search emoji") { openEmojiSearch() }, LayoutParams(-1, dp(44)))
         val categories = listOf("Recent") + EmojiCatalog.categories.keys
         val tabs = LinearLayout(context)
         categories.forEach { category ->
@@ -281,7 +280,10 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             }, LayoutParams(-2, dp(42)))
         }
         val tabScroller = HorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; addView(tabs) }
-        addView(tabScroller)
+        val categoryBar = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL; isBaselineAligned = false }
+        categoryBar.addView(makeKey(Key("Search emoji", command = "emojiSearch"), toolbar = true), LayoutParams(dp(48), dp(48)))
+        categoryBar.addView(tabScroller, LayoutParams(0, dp(48), 1f))
+        addView(categoryBar, LayoutParams(-1, dp(48)))
         tabs.getChildAt(categories.indexOf(emojiCategory))?.let { selected -> tabScroller.post { tabScroller.smoothScrollTo(selected.left, 0) } }
         val emojis = if (emojiCategory == "Recent") recent else EmojiCatalog.categories[emojiCategory].orEmpty()
         val content = LinearLayout(context).apply { orientation = VERTICAL }
@@ -497,7 +499,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             settings.secondarySymbols && !toolbar && key.value.length == 1
         }
         val view: TextView = KeyLabelView(context, secondary).apply {
-            toolbarIcon = command?.takeIf { toolbar && it in listOf("tools", "clipboard", "settings", "hide", "keyboardPicker") }
+            toolbarIcon = command?.takeIf { toolbar && it in listOf("tools", "clipboard", "settings", "hide", "keyboardPicker", "emojiSearch") }
         }
         view.apply {
             text = key.label; gravity = Gravity.CENTER
@@ -515,7 +517,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
                 "selectAll" -> "Select all"; "settings" -> "Open keyboard settings"; "symbols" -> "Numbers and symbols"
                 "tools" -> "Keyboard tools"; "clipboard" -> "Clipboard"; "copy" -> "Copy selection"; "cut" -> "Cut selection"
                 "toolbar" -> if (settings.showToolbar) "Hide toolbar" else "Show toolbar"
-                "more" -> "More symbols"; "alphabet" -> "Letters"; "emoji" -> "Emoji"
+                "more" -> "More symbols"; "alphabet" -> "Letters"; "emoji" -> "Emoji"; "emojiSearch" -> "Search emoji"
                 else -> if (key.value == " ") if (emojiSearch != null) "Space in emoji search" else "Space, hold to switch language" else key.label + if (key.alternates.isNotEmpty()) ", hold for alternatives" else ""
             }
         }
@@ -532,6 +534,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             when (command) {
                 "symbols" -> { page = 1; render() }; "more" -> { page = if (page == 1) 2 else 1; render() }
                 "alphabet" -> { page = 0; render() }; "emoji" -> { closeEmojiSearch(); page = 3; render() }
+                "emojiSearch" -> openEmojiSearch()
                 "tools" -> { closeEmojiSearch(); page = 5; render() }
                 null -> sendText(key.value); else -> sendCommand(command)
             }

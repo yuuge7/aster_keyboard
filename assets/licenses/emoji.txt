@@ -1,4 +1,8 @@
-Emoji names and search keywords
+Emoji catalog, names and search keywords
+
+Unicode Emoji 16.0, fully-qualified emoji and skin-tone sequences.
+https://www.unicode.org/Public/emoji/16.0/emoji-test.txt
+Adapted into EmojiCatalog.kt: base emoji grouped for Aster and supported skin-tone variants.
 
 Unicode CLDR release-48, English and Romanian annotations and annotationsDerived.
 https://github.com/unicode-org/cldr/tree/release-48/common
