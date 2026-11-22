@@ -39,7 +39,7 @@ class KeyboardFeatureTest {
         store.update(mapOf("language" to "en", "englishEnabled" to true, "romanianEnabled" to true,
             "autoCapitalization" to false, "autoCorrect" to true, "suggestions" to true,
             "punctuationSpace" to true, "restoreDiacritics" to true,
-            "showToolbar" to true, "clipboardHistoryEnabled" to false))
+            "showToolbar" to true, "oneHanded" to "off", "clipboardHistoryEnabled" to false))
         store.rememberEmojiCategory("Recent")
         automation.serviceInfo = automation.serviceInfo.apply { flags = flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS }
         shell("ime enable app.aster.aster_keyboard/.ime.KeyboardInputMethodService")
@@ -97,6 +97,14 @@ class KeyboardFeatureTest {
     private fun bounds(description: String) = android.graphics.Rect().also {
         await { node(description) != null }
         node(description)!!.getBoundsInScreen(it)
+    }
+    private fun screenshot(name: String) {
+        instrumentation.waitForIdleSync()
+        val bitmap = automation.takeScreenshot()
+        java.io.File(context.getExternalFilesDir(null), "$name.png").outputStream().use {
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+        bitmap.recycle()
     }
     private fun motion(action: Int, down: Long, points: List<Pair<Int, Pair<Float, Float>>>) {
         val properties = points.map { (id, _) -> android.view.MotionEvent.PointerProperties().apply {
@@ -245,9 +253,78 @@ class KeyboardFeatureTest {
         click("Delete, hold to repeat"); await { text() == "teh" }
         // Let the dictionary finish before the boundary to catch a repeated correction.
         await { node("Insert suggestion the") != null }
+        assertFalse("An undone correction must not be highlighted as automatic", node("Insert suggestion the")!!.isSelected)
         click("Space, hold to switch language"); await { text() == "teh " }
         type("teh"); await { node("Insert suggestion the") != null }
         click("Space, hold to switch language"); await { text() == "teh the " }
+    }
+    @Test fun rapidDictionaryCorrectionsDoNotDependOnSuggestionTiming() {
+        type("keyboar"); await { node("Insert suggestion keyboard") != null }
+        instrumentation.runOnMainSync {
+            field.setText(""); activity.getSystemService(InputMethodManager::class.java).restartInput(field)
+        }
+        rapidType("helllo wrold keyboarf ")
+        await("General dictionary corrections must survive rapid boundaries; received ${text()}") {
+            text() == "hello world keyboard "
+        }
+        click("Delete, hold to repeat"); await { text() == "hello world keyboarf" }
+        click("Space, hold to switch language"); await { text() == "hello world keyboarf " }
+    }
+    @Test fun romanianModeAutocorrectsMixedLanguageTypingWithoutSwitching() {
+        store.update(mapOf("language" to "ro", "englishEnabled" to false))
+        instrumentation.waitForIdleSync()
+        type("multumes"); await { node("Insert suggestion mulțumesc") != null }
+        instrumentation.runOnMainSync {
+            field.setText(""); activity.getSystemService(InputMethodManager::class.java).restartInput(field)
+        }
+        rapidType("buna teh wrold keyboarf multumesc ")
+        await("Bilingual corrections must work with only Romanian layout enabled; received ${text()}") {
+            text() == "bună the world keyboard mulțumesc "
+        }
+        assertEquals("ro", store.read().language)
+    }
+    @Test fun correctionIsHighlightedAndSuggestionPunctuationHasNoStraySpace() {
+        type("teh"); await { node("Insert suggestion the")?.isSelected == true }
+        screenshot("correction")
+        click("Insert suggestion the"); click(",, hold for alternatives")
+        await { text() == "the, " }
+        type("world"); click("Insert suggestion world"); click("., hold for alternatives")
+        await { text() == "the, world." }
+    }
+    @Test fun oneHandedLayoutsSwitchSidesAndRestoreFullWidth() {
+        automation.waitForIdle(200, 3000)
+        val original = bounds("q, hold for alternatives")
+        click("Keyboard tools"); click("Use right-handed keyboard")
+        await { store.read().oneHanded == "right" && node("Use full-width keyboard") != null }
+        val right = bounds("q, hold for alternatives")
+        assertTrue(right.left > original.left)
+        assertTrue(right.width() < original.width())
+        screenshot("one-handed-right")
+        type("hello"); click("Space, hold to switch language")
+        click("Move keyboard left")
+        await { store.read().oneHanded == "left" && node("Move keyboard right") != null }
+        val left = bounds("q, hold for alternatives")
+        assertEquals(original.left, left.left)
+        screenshot("one-handed-left")
+        type("world"); click("Space, hold to switch language")
+        await { text() == "hello world " }
+        click("Use full-width keyboard")
+        await { store.read().oneHanded == "off" && node("Use full-width keyboard") == null }
+        val restored = bounds("q, hold for alternatives")
+        assertEquals(original.left, restored.left)
+        assertEquals(original.width(), restored.width())
+    }
+    @Test fun editingToolsNavigateAndDeleteWholeWords() {
+        type("hello"); click("Space, hold to switch language"); type("world")
+        click("Keyboard tools"); click("Delete previous word")
+        await { text() == "hello " }
+        node("Keyboard tools list")!!.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        screenshot("editing-tools")
+        click("Start of line, hold to select")
+        await { var cursor = -1; instrumentation.runOnMainSync { cursor = field.selectionStart }; cursor == 0 }
+        click("End of line, hold to select")
+        await { var cursor = -1; instrumentation.runOnMainSync { cursor = field.selectionStart }; cursor == 6 }
+        click("Delete previous word"); await { text().isEmpty() }
     }
     @Test fun keyboardPickerStaysAvailableWithSuggestionsAndHiddenToolbar() {
         val picker = "Change keyboard or voice input"
@@ -454,12 +531,16 @@ class KeyboardFeatureTest {
             val clip = android.content.ClipData.newPlainText("Test clip", text)
             if (sensitive) clip.description.extras = android.os.PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
             context.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(clip)
-            if (sensitive) assertTrue("Android must retain the sensitive clip marker",
-                context.getSystemService(android.content.ClipboardManager::class.java).primaryClipDescription?.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true)
-            if (sensitive) assertNull("Sensitive clipboard text must be rejected by the reader",
-                ClipboardText.read(context.getSystemService(android.content.ClipboardManager::class.java)))
         }
         instrumentation.waitForIdleSync()
+        if (sensitive) {
+            // Allow platform clipboard updates to propagate before checking metadata.
+            val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+            await("Android must retain the sensitive clip marker") {
+                clipboard.primaryClipDescription?.extras?.getBoolean("android.content.extra.IS_SENSITIVE", false) == true
+            }
+            assertNull("Sensitive clipboard text must be rejected by the reader", ClipboardText.read(clipboard))
+        }
     }
     @Test fun clipboardIsOptInPastesVerbatimAndSupportsPinDeleteClearAndSensitiveClips() {
         copyClip("lowercase,\nverbatim!")

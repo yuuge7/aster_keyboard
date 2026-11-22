@@ -54,6 +54,22 @@ class InputConnectionController(private val connection: () -> InputConnection?) 
     fun move(right: Boolean, select: Boolean = false) = key(
         if (right) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT,
         if (select) KeyEvent.META_SHIFT_ON else 0)
+    fun navigate(direction: String, select: Boolean = false) {
+        val code = when (direction) {
+            "up" -> KeyEvent.KEYCODE_DPAD_UP; "down" -> KeyEvent.KEYCODE_DPAD_DOWN
+            "home" -> KeyEvent.KEYCODE_MOVE_HOME; "end" -> KeyEvent.KEYCODE_MOVE_END
+            else -> return
+        }
+        key(code, if (select) KeyEvent.META_SHIFT_ON else 0)
+    }
+    fun deleteWord(sensitive: Boolean) {
+        if (sensitive) { key(KeyEvent.KEYCODE_DEL); return }
+        val ic = connection() ?: return
+        if (!ic.getSelectedText(0).isNullOrEmpty()) { selection.commit(0); ic.commitText("", 1); return }
+        val before = before(256)
+        val length = WordDeletion.length(before)
+        if (length > 0) { selection.deleteBefore(length); ic.deleteSurroundingText(length, 0) }
+    }
     fun moveBy(steps: Int) {
         val ic = connection() ?: return
         ic.beginBatchEdit()

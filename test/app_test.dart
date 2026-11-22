@@ -384,4 +384,29 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets('One-handed position saves and survives reopening settings', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const AsterApp());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    final target = find.byKey(const ValueKey('setting-oneHanded'));
+    final scrollable = find
+        .descendant(
+          of: find.byKey(const PageStorageKey('keyboardSettings')),
+          matching: find.byType(Scrollable),
+        )
+        .first;
+    await tester.scrollUntilVisible(target, 300, scrollable: scrollable);
+    await tester.tap(find.descendant(of: target, matching: find.text('Right')));
+    await tester.pumpAndSettle();
+    expect(preferences['oneHanded'], 'right');
+    await tester.tap(find.text('Try it'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<SegmentedButton<String>>(target).selected, {'right'});
+    expect(tester.takeException(), isNull);
+  });
 }

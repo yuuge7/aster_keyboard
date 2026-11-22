@@ -122,4 +122,19 @@ class TypingSessionTest {
         val editor = Editor(); type(TypingSession(editor), "1,5 lei 12:30")
         assertEquals("1,5 lei 12:30", editor.text)
     }
+    @Test fun acceptedSuggestionsAttachPunctuationAndAvoidDuplicateSpaces() {
+        for ((punctuation, expected) in listOf("," to "hello, ", "." to "hello.", "!" to "hello! ", ")" to "hello)")) {
+            val editor = Editor(); val session = TypingSession(editor)
+            type(session, "hel"); session.accept("hello"); type(session, punctuation)
+            assertEquals(expected, editor.text)
+        }
+        val editor = Editor(); val session = TypingSession(editor)
+        session.accept("hello"); type(session, " world")
+        assertEquals("hello world", editor.text)
+    }
+    @Test fun punctuationAfterASuggestionStillAttachesWithSpacingDisabled() {
+        val editor = Editor(); val session = TypingSession(editor)
+        session.accept("hello"); type(session, ",world", punctuation = false)
+        assertEquals("hello,world", editor.text)
+    }
 }

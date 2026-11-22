@@ -4,6 +4,36 @@ package app.aster.aster_keyboard.ime
 class MultilingualSuggestions(private val dictionary: (String) -> WordLexicon?) {
     private data class Match(val candidate: WordLexicon.Candidate, val distance: Int, val languageOrder: Int)
 
+    /** Constant-time common fixes are safe on the key-event path, even at cold start. */
+    fun immediateCorrection(input: String, language: String, restoreDiacritics: Boolean = true): String? {
+        val primary = dictionary(language)
+        val common = if (primary == null) WordLexicon.commonCorrection(language, input, restoreDiacritics)
+            else primary.immediateCorrection(input, restoreDiacritics)
+        if (language != "ro" || common != null || primary?.contains(input) == true) return common
+        val english = dictionary("en")
+        return if (english == null) WordLexicon.commonCorrection("en", input)
+            else english.immediateCorrection(input)
+    }
+
+    /** Worker-only: known spellings survive; equally close cross-language fixes stay suggestions. */
+    fun correction(input: String, language: String, restoreDiacritics: Boolean = true): String? {
+        if (protectsEnglish(input, language, restoreDiacritics)) return null
+        immediateCorrection(input, language, restoreDiacritics)?.let { return it }
+        val primary = dictionary(language)
+        val first = primary?.correction(input, restoreDiacritics)
+        if (language != "ro" || primary?.contains(input) == true) return first
+        val second = dictionary("en")?.correction(input) ?: return first
+        if (first == null || WordLexicon.normalize(first) == WordLexicon.normalize(second)) return second
+        val plain = WordLexicon.fold(WordLexicon.normalize(input))
+        val primaryDistance = distance(plain, WordLexicon.fold(WordLexicon.normalize(first)))
+        val englishDistance = distance(plain, WordLexicon.fold(WordLexicon.normalize(second)))
+        return when {
+            primaryDistance < englishDistance -> first
+            englishDistance < primaryDistance -> second
+            else -> null
+        }
+    }
+
     fun suggestions(input: String, language: String, personal: Map<String, Set<String>> = emptyMap()): List<String> {
         // Preserve the existing English suggestion and autocorrect policy.
         if (language != "ro") return dictionary(language)?.suggestions(input, personal[language].orEmpty()).orEmpty()
@@ -31,6 +61,9 @@ class MultilingualSuggestions(private val dictionary: (String) -> WordLexicon?) 
     /** Known English words must survive Romanian autocorrect, including rarer terms. */
     fun protectsEnglish(input: String, language: String, restoreDiacritics: Boolean = true): Boolean =
         language == "ro" && dictionary("en")?.contains(input) == true &&
+            // Frequency lists include some misspellings. A curated English fix
+            // may replace those only when the input is not a Romanian word.
+            !(dictionary("ro")?.contains(input) != true && dictionary("en")?.immediateCorrection(input) != null) &&
             !(restoreDiacritics && (dictionary("ro")?.hasDiacriticAlternative(input) == true ||
                 WordLexicon.commonDiacriticAlternative(input)))
 

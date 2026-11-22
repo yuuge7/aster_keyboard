@@ -16,6 +16,7 @@ data class KeyboardSettings(
     val keyBorders: Boolean = false, val secondarySymbols: Boolean = true,
     val longPressDelay: Int = 400,
     val showToolbar: Boolean = true, val clipboardHistoryEnabled: Boolean = false,
+    val oneHanded: String = "off",
     val personalWordsEn: String = "", val personalWordsRo: String = "",
 ) {
     val enabledLanguages get() = listOfNotNull("en".takeIf { englishEnabled }, "ro".takeIf { romanianEnabled })
@@ -31,6 +32,7 @@ data class KeyboardSettings(
         "keyBorders" to keyBorders, "secondarySymbols" to secondarySymbols,
         "longPressDelay" to longPressDelay,
         "showToolbar" to showToolbar, "clipboardHistoryEnabled" to clipboardHistoryEnabled,
+        "oneHanded" to oneHanded,
     )
 }
 
@@ -50,6 +52,7 @@ class SettingsStore(private val context: Context) {
             keyBorders = p.getBoolean("keyBorders", false), secondarySymbols = p.getBoolean("secondarySymbols", true),
             longPressDelay = p.getInt("longPressDelay", 400),
             showToolbar = p.getBoolean("showToolbar", true),
+            oneHanded = p.getString("oneHanded", "off")!!.takeIf { it in listOf("off", "left", "right") } ?: "off",
             clipboardHistoryEnabled = p.getBoolean("clipboardHistoryEnabled", false),
             personalWordsEn = p.getString("personalWordsEn", "")!!, personalWordsRo = p.getString("personalWordsRo", "")!!,
         )
@@ -72,6 +75,7 @@ class SettingsStore(private val context: Context) {
             }
         }
         require(values["theme"] in listOf("system", "light", "dark")) { "Choose a valid theme" }
+        require(values["oneHanded"] in listOf("off", "left", "right")) { "Choose a valid keyboard position" }
         require(values["englishEnabled"] == true || values["romanianEnabled"] == true) { "Keep at least one language enabled" }
         val languages = listOfNotNull("en".takeIf { values["englishEnabled"] == true }, "ro".takeIf { values["romanianEnabled"] == true })
         if (values["language"] !in languages) values["language"] = languages.first()

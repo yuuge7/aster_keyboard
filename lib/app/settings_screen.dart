@@ -235,6 +235,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onTap: widget.busy ? null : editDictionary,
       ),
       section('Keys and feedback'),
+      const Text('Keyboard position'),
+      const SizedBox(height: 10),
+      SegmentedButton<String>(
+        key: const ValueKey('setting-oneHanded'),
+        segments: const [
+          ButtonSegment(value: 'off', label: Text('Full')),
+          ButtonSegment(value: 'left', label: Text('Left')),
+          ButtonSegment(value: 'right', label: Text('Right')),
+        ],
+        selected: {settings.text('oneHanded')},
+        onSelectionChanged: widget.busy
+            ? null
+            : (values) => widget.onSave({'oneHanded': values.first}),
+      ),
+      const SizedBox(height: 10),
+      const Text(
+        'Use a narrower keyboard for one-handed typing in portrait. Switch sides or expand from the keyboard.',
+      ),
+      const SizedBox(height: 12),
       toggle(
         'showToolbar',
         'Show keyboard toolbar',
@@ -426,27 +445,33 @@ class KeyboardPreview extends StatelessWidget {
                 ),
               Padding(
                 padding: const EdgeInsets.all(8),
-                child: Column(
-                  children: [
-                    if (settings.enabled('showToolbar'))
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 5),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            'aster',
-                            settings.language == 'ro' ? 'Bună' : 'Hello',
-                            '⚙',
-                          ].map((text) => legend(text)).toList(),
+                child: FractionallySizedBox(
+                  widthFactor: settings.text('oneHanded') == 'off' ? 1 : .84,
+                  alignment: settings.text('oneHanded') == 'right'
+                      ? Alignment.centerRight
+                      : Alignment.centerLeft,
+                  child: Column(
+                    children: [
+                      if (settings.enabled('showToolbar'))
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 5),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              'aster',
+                              settings.language == 'ro' ? 'Bună' : 'Hello',
+                              '⚙',
+                            ].map((text) => legend(text)).toList(),
+                          ),
                         ),
-                      ),
-                    if (settings.enabled('numberRow'))
-                      row('1234567890'.split('')),
-                    row('qwertyuiop'.split('')),
-                    row('asdfghjkl'.split('')),
-                    row(['⇧', ...'zxcvbnm'.split(''), '⌫']),
-                    row(['123', '☺', ',', 'space', '.', '↵']),
-                  ],
+                      if (settings.enabled('numberRow'))
+                        row('1234567890'.split('')),
+                      row('qwertyuiop'.split('')),
+                      row('asdfghjkl'.split('')),
+                      row(['⇧', ...'zxcvbnm'.split(''), '⌫']),
+                      row(['123', '☺', ',', 'space', '.', '↵']),
+                    ],
+                  ),
                 ),
               ),
             ],

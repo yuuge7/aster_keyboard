@@ -22,6 +22,7 @@ class KeyboardSettings {
     'secondarySymbols': true,
     'longPressDelay': 400,
     'showToolbar': true,
+    'oneHanded': 'off',
     'clipboardHistoryEnabled': false,
     'wallpaperDim': .35,
     'personalWordsEn': '',

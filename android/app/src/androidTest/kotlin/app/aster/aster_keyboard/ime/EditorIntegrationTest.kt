@@ -40,6 +40,14 @@ class EditorIntegrationTest {
         assertEquals(0, connection.reads)
         assertEquals(6, connection.keys)
     }
+    @Test fun privateWordDeletionAndLineNavigationNeverReadContents() {
+        val connection = RecordingConnection()
+        val editor = InputConnectionController { connection }
+        editor.deleteWord(true)
+        listOf("home", "end", "up", "down").forEach { editor.navigate(it, select = true) }
+        assertEquals(0, connection.reads)
+        assertEquals(10, connection.keys)
+    }
     @Test fun deletionReplacesASelection() {
         val connection = RecordingConnection().apply { selected = "word" }
         InputConnectionController { connection }.delete(false)

@@ -52,6 +52,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     private var shiftMode = ShiftMode.OFF
     private var drawnShift: ShiftMode? = null
     private var suggestionWords = emptyList<String>()
+    private var suggestedCorrection: String? = null
     private val suggestionButtons = mutableListOf<TextView>()
     private var page = 0
     private var emojiCategory = "Recent"
@@ -150,8 +151,31 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
     fun cancelPendingTouches() { touches.cancelAll(); handler.removeCallbacksAndMessages(null); popup?.dismiss(); popup = null }
     override fun onDetachedFromWindow() { cancelPendingTouches(); super.onDetachedFromWindow() }
     private fun render() {
+        renderContent()
+        if (settings.oneHanded == "off" || landscape) return
+        val content = LinearLayout(context).apply { orientation = VERTICAL; isMotionEventSplittingEnabled = true }
+        while (childCount > 0) {
+            val child = getChildAt(0); removeView(child); content.addView(child)
+        }
+        val rail = LinearLayout(context).apply { orientation = VERTICAL; gravity = Gravity.CENTER }
+        fun control(label: String, description: String, command: String) = panelButton(label) { listener.onCommand(command) }.apply {
+            contentDescription = description
+            if (Build.VERSION.SDK_INT >= 26) tooltipText = description
+        }
+        rail.addView(control("↔", "Use full-width keyboard", "oneHandedOff"), LayoutParams(-1, dp(48)))
+        rail.addView(control(if (settings.oneHanded == "right") "‹" else "›",
+            if (settings.oneHanded == "right") "Move keyboard left" else "Move keyboard right",
+            if (settings.oneHanded == "right") "oneHandedLeft" else "oneHandedRight"), LayoutParams(-1, dp(48)).apply { topMargin = dp(8) })
+        val container = LinearLayout(context).apply { gravity = Gravity.CENTER_VERTICAL; isMotionEventSplittingEnabled = true }
+        val railParams = LayoutParams(dp(48), -1).apply { setMargins(dp(4), 0, dp(4), 0) }
+        if (settings.oneHanded == "right") container.addView(rail, railParams)
+        container.addView(content, LayoutParams(0, -2, 1f))
+        if (settings.oneHanded == "left") container.addView(rail, railParams)
+        addView(container, LayoutParams(-1, -2))
+    }
+    private fun renderContent() {
         cancelPendingTouches(); removeAllViews(); letters.clear(); shiftKey = null; suggestions = null; drawnShift = null
-        suggestionButtons.clear(); suggestionWords = emptyList(); toolbarRow = null
+        suggestionButtons.clear(); suggestionWords = emptyList(); suggestedCorrection = null; toolbarRow = null
         searchLabel = null; searchResults = null; searchScroller = null
         val topBar = if (settings.showToolbar && emojiSearch == null) FrameLayout(context).also { strip ->
             toolbarRow = toolbar().also { strip.addView(it, FrameLayout.LayoutParams(-1, -1)) }
@@ -201,21 +225,30 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
             maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(dp(4), 0, dp(4), 0)
         }, LayoutParams(0, -1, 1f))
-        listOf(Key("Clipboard", command = "clipboard"), Key("Settings", command = "settings"),
-            Key("Hide", command = "hide"), Key("Keyboards", command = "keyboardPicker")).forEach {
+        listOfNotNull(Key("Clipboard", command = "clipboard"), Key("Settings", command = "settings"),
+            Key("Hide", command = "hide").takeIf { settings.oneHanded == "off" || landscape },
+            Key("Keyboards", command = "keyboardPicker")).forEach {
             row.addView(makeKey(it, toolbar = true), LayoutParams(dp(48), -1))
         }
         return row
     }
-    fun showSuggestions(words: List<String>) {
+    fun showSuggestions(words: List<String>, correction: String? = null) {
         if (suggestions == null) return
         val next = words.distinct().take(3)
-        if (suggestionWords == next) return
+        if (suggestionWords == next && suggestedCorrection == correction) return
         suggestionWords = next
+        suggestedCorrection = correction
         applySuggestionVisibility()
         suggestionButtons.forEachIndexed { index, button ->
             val word = next.getOrNull(index).orEmpty()
             if (button.text.toString() != word) { button.text = word; button.contentDescription = "Insert suggestion $word" }
+            val automatic = word.isNotEmpty() && word == correction
+            button.background = toolbarBackground(automatic)
+            button.setTextColor(if (automatic) accent else ink)
+            button.typeface = Typeface.create(if (automatic) "sans-serif-medium" else "sans-serif", Typeface.NORMAL)
+            button.isSelected = automatic
+            if (Build.VERSION.SDK_INT >= 30) button.stateDescription = if (automatic) "Corrects on Space" else null
+            if (Build.VERSION.SDK_INT >= 26) button.tooltipText = if (automatic) "Space to correct to $word" else "Insert $word"
             button.visibility = if (word.isEmpty()) INVISIBLE else VISIBLE
         }
     }
@@ -434,11 +467,20 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
         setOnClickListener { feedback(this); action() }
     }
     private fun toolsPanel() {
-        addView(panelMessage("Keyboard tools"))
+        val firstTool = childCount
         row(listOf(Key("Emoji", command = "emoji"), Key("Clipboard", command = "clipboard"),
             Key("Keyboards", command = "keyboardPicker"), Key("Settings", command = "settings")))
         row(listOf(Key("Select all", command = "selectAll"), Key("Copy", command = "copy"), Key("Cut", command = "cut")))
         row(listOf(Key("‹", command = "left"), Key("›", command = "right"), Key("Language", command = "switch"), Key(if (settings.showToolbar) "Hide toolbar" else "Show toolbar", command = "toolbar")))
+        row(listOf(Key("Home", command = "home"), Key("↑", command = "up"), Key("↓", command = "down"), Key("End", command = "end")))
+        row(listOf(Key("Delete word", command = "deleteWord"), Key("Left hand", command = "oneHandedLeft"), Key("Right hand", command = "oneHandedRight")))
+        val content = LinearLayout(context).apply { orientation = VERTICAL }
+        while (childCount > firstTool) {
+            val child = getChildAt(firstTool); removeView(child); content.addView(child)
+        }
+        addView(ScrollView(context).apply {
+            addView(content); isFillViewport = true; contentDescription = "Keyboard tools list"
+        }, LayoutParams(-1, dp(if (landscape) 150 else 240)))
         panelFooter()
     }
     private fun row(keys: List<Key>, inset: Int = 0, compact: Boolean = false) {
@@ -514,6 +556,9 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
                 "shift" -> "Shift, double tap for caps lock"; "switch" -> "Switch English and Romanian, hold to choose another keyboard"
                 "keyboardPicker" -> "Change keyboard or voice input"
                 "hide" -> "Hide keyboard"; "left" -> "Move cursor left, hold to select"; "right" -> "Move cursor right, hold to select"
+                "up" -> "Move cursor up, hold to select"; "down" -> "Move cursor down, hold to select"
+                "home" -> "Start of line, hold to select"; "end" -> "End of line, hold to select"
+                "deleteWord" -> "Delete previous word"; "oneHandedLeft" -> "Use left-handed keyboard"; "oneHandedRight" -> "Use right-handed keyboard"
                 "selectAll" -> "Select all"; "settings" -> "Open keyboard settings"; "symbols" -> "Numbers and symbols"
                 "tools" -> "Keyboard tools"; "clipboard" -> "Clipboard"; "copy" -> "Copy selection"; "cut" -> "Cut selection"
                 "toolbar" -> if (settings.showToolbar) "Hide toolbar" else "Show toolbar"
@@ -539,7 +584,7 @@ class AsterKeyboardView(context: Context, private val listener: Listener) : Line
                 null -> sendText(key.value); else -> sendCommand(command)
             }
         }
-        if (key.alternates.isNotEmpty() || command in listOf("shift", "left", "right", "switch", "emoji") || key.value == " ") {
+        if (key.alternates.isNotEmpty() || command in listOf("shift", "left", "right", "up", "down", "home", "end", "switch", "emoji") || key.value == " ") {
             view.setOnLongClickListener {
                 feedback(view)
                 when { key.alternates.isNotEmpty() -> showAlternates(view, key.alternates)

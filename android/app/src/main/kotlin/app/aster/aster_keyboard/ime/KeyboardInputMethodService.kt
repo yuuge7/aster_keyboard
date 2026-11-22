@@ -43,6 +43,9 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
     private lateinit var multilingual: MultilingualSuggestions
     private val worker = ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
     private val emojiWorker = ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
+    private val boundaryWorker = ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
+    private val inputQueue = InputDispatchQueue()
+    private var boundaryTask: Future<*>? = null
     private val main = Handler(Looper.getMainLooper())
     private var suggestionTask: Future<*>? = null
     private var emojiSearchTask: Future<*>? = null
@@ -81,6 +84,7 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         updateSuggestions()
     }
     override fun onStartInput(info: EditorInfo, restarting: Boolean) {
+        cancelPendingInput()
         // The old connection must not be queried after Android switches editors.
         session.reset(finish = false); generation++; suggestionTask?.cancel(true)
         super.onStartInput(info, restarting)
@@ -110,6 +114,7 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         val ownUpdate = editor.selection.update(newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         if (!ownUpdate && session.word.isNotEmpty() && (newSelStart != candidatesEnd || newSelEnd != candidatesEnd)) {
+            cancelPendingInput()
             session.reset(); updateSuggestions()
         }
         updateCapitalization()
@@ -133,32 +138,57 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
             multilingual.protectsEnglish(word, preferences.language, preferences.restoreDiacritics) ||
             (preferences.language != "ro" && preferences.enabledLanguages.filter { it != preferences.language }.any { dictionaries[it]?.isCommon(word) == true })
     private fun correction(word: String): String? {
-        if (!profile.assistedTyping || !settings.autoCorrect) return null
+        if (!profile.assistedTyping || !settings.autoCorrect || !session.correctionAllowed) return null
         if (protectedFromCorrection(word, settings, protectedWords)) return null
         // Never run an edit-distance search or wait for the worker on a key event.
-        val dictionary = dictionaries[settings.language]
-        val immediate = if (dictionary == null) WordLexicon.commonCorrection(settings.language, word, settings.restoreDiacritics)
-            else dictionary.immediateCorrection(word, settings.restoreDiacritics)
+        val immediate = multilingual.immediateCorrection(word, settings.language, settings.restoreDiacritics)
         return immediate ?: correctionResult?.takeIf { it.first == word }?.second
     }
-    override fun onText(text: String) {
+    private fun cancelPendingInput() { inputQueue.clear(); boundaryTask?.cancel(true); boundaryTask = null }
+    private fun atWordBoundary(action: (String?) -> Unit) {
+        val word = session.word
+        val dictionary = dictionaries[settings.language]
+        val immediate = correction(word)
+        if (!session.correctionAllowed || !profile.assistedTyping || !settings.autoCorrect || dictionary == null ||
+            immediate != null || correctionResult?.first == word ||
+            protectedFromCorrection(word, settings, protectedWords) || dictionary.contains(word)) {
+            action(immediate); return
+        }
+        // Hold only editor dispatch, never the UI thread. Subsequent taps stay
+        // ordered behind this boundary; no already-committed word is rewritten.
+        val restore = settings.restoreDiacritics
+        val language = settings.language
+        val token = inputQueue.pause()
+        boundaryTask = boundaryWorker.submit {
+            val corrected = runCatching { multilingual.correction(word, language, restore) }.getOrNull()
+            main.post { inputQueue.resume(token) { action(corrected) } }
+        }
+    }
+    override fun onText(text: String) = inputQueue.submit {
         val value = if (shift.uppercase && text.length == 1 && text[0].isLetter()) text.uppercase() else text
+        if (profile.assistedTyping && !session.continuesWord(value)) atWordBoundary { typeText(value, it) }
+        else typeText(value, null)
+    }
+    private fun typeText(value: String, corrected: String?) {
         editor.batch {
             if (!profile.assistedTyping) {
                 // No reads, composition, correction, recents, or punctuation transforms in private editors.
                 editor.commit(value)
             } else {
-                session.type(value, settings.suggestions || settings.autoCorrect, ::correction,
+                session.type(value, settings.suggestions || settings.autoCorrect, { corrected },
                     settings.punctuationSpace, settings.doubleSpacePeriod, SystemClock.uptimeMillis())
             }
         }
         shift.consume(); updateCapitalization(typedLetter = value.length == 1 && value[0].isLetter()); updateSuggestions()
     }
     override fun onSuggestion(word: String) {
-        if (!profile.assistedTyping || session.word.isEmpty()) return
-        editor.batch { session.accept(word) }; updateCapitalization(); updateSuggestions()
+        val token = generation
+        inputQueue.submit {
+            if (!profile.assistedTyping || session.word.isEmpty() || generation != token) return@submit
+            editor.batch { session.accept(word) }; updateCapitalization(); updateSuggestions()
+        }
     }
-    override fun onEmoji(emoji: String) {
+    override fun onEmoji(emoji: String) = inputQueue.submit {
         editor.batch { session.reset(); editor.commit(emoji) }
         if (profile.assistedTyping) store.rememberEmoji(emoji)
         updateSuggestions()
@@ -179,8 +209,8 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
             main.post { if (active && token == emojiGeneration) keyboard?.showEmojiSearchResults(query, results) }
         }
     }
-    override fun onCursorMove(steps: Int) {
-        if (!active || steps == 0) return
+    override fun onCursorMove(steps: Int) = inputQueue.submit {
+        if (!active || steps == 0) return@submit
         session.reset()
         editor.moveBy(steps)
         updateSuggestions(); updateCapitalization()
@@ -201,8 +231,8 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         if (!active || profile.sensitive) return
         keyboard?.refreshClipboard(clipboardEntries(capture), settings.clipboardHistoryEnabled)
     }
-    override fun onClipboardPaste(text: String) {
-        if (!active || profile.sensitive) return
+    override fun onClipboardPaste(text: String) = inputQueue.submit {
+        if (!active || profile.sensitive) return@submit
         // Paste verbatim, with no capitalization, corrections, or punctuation transforms.
         editor.batch { session.reset(); editor.commit(text) }; updateCapitalization(); updateSuggestions()
     }
@@ -215,12 +245,20 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         }
         refreshClipboard()
     }
-    override fun onCommand(command: String, longPress: Boolean) {
+    override fun onCommand(command: String, longPress: Boolean) = inputQueue.submit {
         when (command) {
             "shift" -> { if (longPress) shift.lock() else shift.tap(SystemClock.uptimeMillis()); keyboard?.updateShift(shift.mode) }
             "delete" -> { if (!profile.assistedTyping || !session.backspace()) editor.delete(profile.sensitive); updateSuggestions(); updateCapitalization() }
-            "enter" -> { editor.batch { session.finishWord(::correction); session.reset(); editor.enter(profile) }; updateSuggestions(); updateCapitalization() }
+            "enter" -> atWordBoundary { corrected ->
+                editor.batch { session.finishWord { corrected }; session.reset(); editor.enter(profile) }
+                updateSuggestions(); updateCapitalization()
+            }
             "left", "right" -> { session.reset(); editor.move(command == "right", longPress); updateSuggestions() }
+            "up", "down", "home", "end" -> { session.reset(); editor.navigate(command, longPress); updateSuggestions(); updateCapitalization() }
+            "deleteWord" -> { editor.batch { session.reset(); editor.deleteWord(profile.sensitive) }; updateSuggestions(); updateCapitalization() }
+            "oneHandedLeft", "oneHandedRight", "oneHandedOff" -> store.update(mapOf("oneHanded" to when (command) {
+                "oneHandedLeft" -> "left"; "oneHandedRight" -> "right"; else -> "off"
+            }))
             "selectAll" -> { session.reset(); editor.selectAll(); updateSuggestions() }
             "copy", "cut" -> if (!profile.sensitive) {
                 session.reset(); editor.contextAction(if (command == "copy") android.R.id.copy else android.R.id.cut); updateSuggestions()
@@ -259,20 +297,26 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
             keyboard?.showSuggestions(emptyList()); return
         }
         val preferences = settings; val custom = personalWords; val protected = protectedWords
+        val allowCorrection = session.correctionAllowed
         keyboard?.showSuggestions(if (preferences.suggestions) listOf(word) else emptyList())
         suggestionTask = worker.schedule({
             if (token != generation || Thread.currentThread().isInterrupted) return@schedule
+            val corrected = if (allowCorrection && preferences.autoCorrect && !protectedFromCorrection(word, preferences, protected))
+                multilingual.correction(word, preferences.language, preferences.restoreDiacritics) else null
             val candidates = if (preferences.suggestions) multilingual.suggestions(word, preferences.language, custom) else emptyList()
             if (token != generation || Thread.currentThread().isInterrupted) return@schedule
-            val corrected = if (preferences.autoCorrect && !protectedFromCorrection(word, preferences, protected))
-                dictionaries[preferences.language]?.correction(word, preferences.restoreDiacritics) else null
             main.post {
                 if (token == generation && active && profile.assistedTyping && session.word == word) {
                     correctionResult = word to corrected
-                    if (preferences.suggestions) keyboard?.showSuggestions(listOf(word) + candidates.take(2))
+                    if (preferences.suggestions) {
+                        val alternatives = (listOfNotNull(corrected) + candidates).distinct().filter { it != word }
+                        val display = if (corrected != null) listOf(word, corrected) + alternatives.filter { it != corrected }.take(1)
+                            else listOf(word) + alternatives.take(2)
+                        keyboard?.showSuggestions(display, corrected)
+                    }
                 }
             }
-        }, 24, TimeUnit.MILLISECONDS)
+        }, 0, TimeUnit.MILLISECONDS)
     }
     override fun onSharedPreferenceChanged(preferences: SharedPreferences, key: String?) {
         if (key in listOf("recentEmoji", "emojiCategory")) return
@@ -282,14 +326,16 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
             refreshClipboard(capture = keyboard?.isClipboardOpen == true)
             return
         }
-        session.reset(); readSettings(); updateCapitalization(); configure()
+        cancelPendingInput(); session.reset(); readSettings(); updateCapitalization(); configure()
     }
     override fun onFinishInputView(finishingInput: Boolean) {
+        cancelPendingInput()
         emojiGeneration++; emojiSearchTask?.cancel(true)
         keyboard?.cancelPendingTouches(); keyboard?.clearTransientPanels(); session.reset(); active = false; generation++; suggestionTask?.cancel(true)
         keyboard?.showSuggestions(emptyList()); super.onFinishInputView(finishingInput)
     }
     override fun onFinishInput() {
+        cancelPendingInput()
         emojiGeneration++; emojiSearchTask?.cancel(true)
         session.reset(); active = false; generation++; suggestionTask?.cancel(true); correctionResult = null; shift.reset(); super.onFinishInput()
     }
@@ -298,7 +344,7 @@ class KeyboardInputMethodService : InputMethodService(), AsterKeyboardView.Liste
         lastClipboardText = null
         store.preferences.unregisterOnSharedPreferenceChangeListener(this)
         keyboard?.cancelPendingTouches(); keyboard = null; generation++; emojiGeneration++
-        worker.shutdownNow(); emojiWorker.shutdownNow(); main.removeCallbacksAndMessages(null)
+        cancelPendingInput(); worker.shutdownNow(); emojiWorker.shutdownNow(); boundaryWorker.shutdownNow(); main.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 }

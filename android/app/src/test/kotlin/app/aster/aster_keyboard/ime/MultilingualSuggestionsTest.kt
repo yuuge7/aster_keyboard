@@ -67,6 +67,21 @@ class MultilingualSuggestionsTest {
         assertTrue(suggestions.suggestions("", "ro").isEmpty())
         assertTrue(suggestions.suggestions("x".repeat(33), "ro").isEmpty())
     }
+    @Test fun romanianModeCorrectsEnglishTyposAndKeepsKnownRomanianWords() {
+        val suggestions = engine(listOf("bună" to 100000, "cort" to 20000),
+            listOf("world" to 100000, "keyboard" to 100000, "court" to 100000, "the" to 100000))
+        assertEquals("world", suggestions.correction("wrold", "ro"))
+        assertEquals("keyboard", suggestions.correction("keybord", "ro"))
+        assertEquals("the", suggestions.immediateCorrection("teh", "ro"))
+        assertNull(suggestions.correction("cort", "ro"))
+        assertEquals("Bună", suggestions.correction("Buna", "ro"))
+        assertNull(suggestions.correction("world", "ro"))
+    }
+    @Test fun equallyCloseCrossLanguageCorrectionsAreNotAppliedAutomatically() {
+        val suggestions = engine(listOf("candle" to 100000), listOf("handle" to 100000))
+        assertNull(suggestions.correction("xandle", "ro"))
+        assertTrue(suggestions.suggestions("xandle", "ro").containsAll(listOf("candle", "handle")))
+    }
     @Test fun bundledDictionariesSuggestRealMixedLanguageWords() {
         val dictionaries = listOf("ro", "en").associateWith { language ->
             val entries = File("src/main/assets/dictionaries/$language.txt").readLines().mapNotNull { line ->
@@ -80,5 +95,12 @@ class MultilingualSuggestionsTest {
         assertEquals("mulțumesc", suggestions.suggestions("multumesc", "ro").first())
         assertFalse(suggestions.protectsEnglish("buna", "ro"))
         assertFalse(suggestions.protectsEnglish("maine", "ro"))
+        assertEquals("world", suggestions.correction("wrold", "ro"))
+        assertEquals("keyboard", suggestions.correction("keyboarf", "ro"))
+        assertEquals("the", suggestions.correction("teh", "ro"))
+        assertEquals("receive", suggestions.correction("recieve", "ro"))
+        assertNull(suggestions.correction("adn", "ro")) // Romanian abbreviation for DNA.
+        assertEquals("mulțumesc", suggestions.correction("multumesc", "ro"))
+        assertNull(suggestions.correction("corporatistă", "ro"))
     }
 }

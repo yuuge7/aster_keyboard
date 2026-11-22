@@ -16,12 +16,15 @@ class TypingSession(private val editor: TextEditor) {
     private var lastSpace = -1000L
     private var undo: Pair<String, String>? = null
     private var correctionRejected = false
+    val correctionAllowed get() = word.isNotEmpty() && !correctionRejected
+    fun continuesWord(text: String): Boolean = text.length == 1 &&
+        (text[0].isLetter() || text in listOf("'", "’") && word.isNotEmpty())
     fun reset(finish: Boolean = true) {
         if (finish && word.isNotEmpty()) editor.finish()
         word = ""; automaticSpace = false; undo = null; lastSpace = -1000L; correctionRejected = false
     }
     fun finishWord(correction: (String) -> String?): String? {
-        val corrected = word.takeIf { it.isNotEmpty() && !correctionRejected }?.let(correction)
+        val corrected = word.takeIf { correctionAllowed }?.let(correction)
         if (word.isNotEmpty()) {
             if (corrected != null && corrected != word) editor.commit(corrected) else editor.finish()
             word = ""
@@ -31,7 +34,7 @@ class TypingSession(private val editor: TextEditor) {
     }
     fun type(text: String, compose: Boolean, correction: (String) -> String?,
         punctuationSpace: Boolean, doubleSpacePeriod: Boolean, now: Long) {
-        if (text.length == 1 && (text[0].isLetter() || text in listOf("'", "’") && word.isNotEmpty()) && compose) {
+        if (continuesWord(text) && compose) {
             undo = null; automaticSpace = false; correctionRejected = false
             if (word.length >= 40) { editor.finish(); word = "" }
             word += text; editor.compose(word); return
@@ -40,6 +43,11 @@ class TypingSession(private val editor: TextEditor) {
         val corrected = finishWord(correction)
         undo = null
         var delimiter = text
+        // Suggestions insert a convenient space. Punctuation belongs to the
+        // accepted word, including when automatic punctuation spacing is off.
+        if (automaticSpace && text in listOf(".", ",", ";", ":", "!", "?", "…", ")", "]", "}") && editor.before(1) == " ") {
+            editor.replaceBefore(1, "")
+        }
         val numericSeparator = text in listOf(",", ":") && editor.before(1).lastOrNull()?.isDigit() == true
         if (punctuationSpace && !numericSeparator && text in listOf(",", ";", ":", "!", "?")) {
             if (automaticSpace && editor.before(1) == " ") editor.replaceBefore(1, "")
@@ -60,7 +68,7 @@ class TypingSession(private val editor: TextEditor) {
         if (corrected != null && corrected != original) undo = original to (corrected + delimiter)
     }
     fun accept(candidate: String) {
-        editor.commit(candidate); editor.commit(" "); word = ""; undo = null; automaticSpace = false; correctionRejected = false
+        editor.commit(candidate); editor.commit(" "); word = ""; undo = null; automaticSpace = true; correctionRejected = false
     }
     /** Returns false when the Android adapter should perform ordinary deletion. */
     fun backspace(): Boolean {
